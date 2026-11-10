@@ -34,6 +34,10 @@ extend-select = [
     "UP",      # modern Python syntax
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Expected values written out in a test are the point of the test, not magic numbers
+"*_test.py" = ["PLR2004"]
+
 [tool.pytest.ini_options]
 testpaths = ["src"]
 python_files = ["*_test.py"]
