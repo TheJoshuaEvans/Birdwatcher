@@ -31,7 +31,7 @@ uv run birdwatcher check --course-dir C:\path\to\CS212-CourseMaterials
 uv run birdwatcher check --list-checks
 ```
 
-The first time the app opens, it asks for the folder of your local clone of the course repository (the folder that contains `docs/`) and remembers it. Type or paste the path, or press **Browse…** (Ctrl+O) to pick it in your system's folder picker. `birdwatcher check` uses the same folder unless `--course-dir` names another.
+The first time the app opens, it asks for the folder of your local clone of the course repository (the folder that contains `docs/`) and remembers it. Type or paste the path, or press **Browse…** (Ctrl+O) to pick it in your system's folder picker. The setup page (`s`) also lists your recent course folders, so switching between courses is one click, and lets you choose the editor that opens files. `birdwatcher check` uses the same folder unless `--course-dir` names another.
 
 In the app, mouse and keyboard both work:
 
@@ -59,7 +59,11 @@ When a check knows the fix, the finding's panel shows it as a before and after, 
 
 Any finding can be ignored, with an optional reason ("kept for last term's students"); ignoring an error asks for confirmation first, because readers are affected. Ignored findings leave the list, and the subtitle counts them; `h` shows them again, with their reasons, and `i` brings one back. Ignores are remembered per course folder in `ignored.json` next to the settings. An ignore matches a finding by its check, file and message rather than its line, so it still applies after lines are added or removed above it.
 
-Opening files in VS Code needs its `code` command on the PATH. The Windows installer adds it; on a Mac, run VS Code's command **Shell Command: Install 'code' command in PATH** once.
+Files open in the editor chosen on the setup page:
+
+- **VS Code** opens at the exact line. It needs its `code` command on the PATH: the Windows installer adds it; on a Mac, run VS Code's command **Shell Command: Install 'code' command in PATH** once.
+- **Typora** opens the file at the top, and Birdwatcher says which line to look at. It is found wherever its installer or the Microsoft Store put it (and in `/Applications` on a Mac).
+- **The file's default app** opens it with whatever your system uses for that file type.
 
 ## How it works
 

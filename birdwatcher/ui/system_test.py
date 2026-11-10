@@ -10,7 +10,13 @@ from pathlib import PurePosixPath, PureWindowsPath
 
 import pytest
 
-from birdwatcher.ui.system import editor_url
+from birdwatcher.ui.system import (
+    DEFAULT_APP,
+    TYPORA,
+    VSCODE,
+    desktop_editors,
+    editor_url,
+)
 
 COURSE = PureWindowsPath(r"C:\courses\CS212")  # behaves the same on every OS
 
@@ -35,6 +41,21 @@ def test_editor_url_encodes_spaces_and_hashes():
 def test_editor_url_for_a_mac_path():
     url = editor_url(PurePosixPath("/Users/brian/CS212/docs/A.md"), 4)
     assert url == "vscode://file/Users/brian/CS212/docs/A.md:4"
+
+
+def test_the_editors_on_offer_in_order():
+    editors = desktop_editors()
+    assert list(editors) == [VSCODE, TYPORA, DEFAULT_APP]
+    assert all(editor.id == key for key, editor in editors.items())
+
+
+def test_only_vscode_opens_at_the_line():
+    editors = desktop_editors()
+    assert [e.id for e in editors.values() if e.opens_at_line] == [VSCODE]
+
+
+def test_the_default_app_is_always_available():
+    assert desktop_editors()[DEFAULT_APP].available
 
 
 if __name__ == "__main__":

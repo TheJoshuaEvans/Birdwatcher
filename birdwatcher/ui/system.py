@@ -1,6 +1,6 @@
 """
-Integrations with the user's desktop: VS Code, the file browser and the
-system's folder picker.
+Integrations with the user's desktop: editors (VS Code, Typora, the default
+app), the file browser and the system's folder picker.
 
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
@@ -10,9 +10,12 @@ import shutil
 import subprocess
 import sys
 import urllib.parse
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 EDITOR_COMMAND = "code"  # VS Code's command-line launcher
+VSCODE, TYPORA, DEFAULT_APP = "vscode", "typora", "default"  # editor ids
 FOLDER_PICKER_TITLE = "Choose the course repository's folder"
 
 
@@ -60,6 +63,126 @@ def open_in_vscode(path, line):
     )
 
 
+@dataclass(frozen=True)
+class Editor:
+    """
+    An editor Birdwatcher can open course files in.
+
+    Attributes:
+        id (str): The id saved in the settings, e.g. "vscode".
+        name (str): Its name for people, e.g. "VS Code".
+        opens_at_line (bool): Whether it puts the cursor on the given line;
+            when False, the file opens at the top.
+        available (bool): Whether it was found on this computer.
+        open (Callable[[Path, int], object]): Opens a file at a 1-based line
+            (or at the top, see opens_at_line), without waiting. Raises
+            OSError when the editor cannot be started.
+    """
+
+    id: str
+    name: str
+    opens_at_line: bool
+    available: bool
+    open: Callable[[Path, int], object]
+
+
+def desktop_editors():
+    """
+    The editors Birdwatcher offers, looked up on this computer.
+
+    Returns:
+        dict[str, Editor]: "vscode" (VS Code, at the line, when its `code`
+            command is on the PATH), "typora" (Typora, at the top of the file,
+            when installed) and "default" (the system's default app for the
+            file type, at the top, always available), in that order.
+    """
+    typora = find_typora()
+    return {
+        VSCODE: Editor(
+            VSCODE,
+            "VS Code",
+            True,
+            shutil.which(EDITOR_COMMAND) is not None,
+            open_in_vscode,
+        ),
+        TYPORA: Editor(
+            TYPORA,
+            "Typora",
+            False,
+            typora is not None,
+            lambda path, line: _launch([*(typora or ["typora"]), str(path)]),
+        ),
+        DEFAULT_APP: Editor(
+            DEFAULT_APP,
+            "The file's default app",
+            False,
+            True,
+            lambda path, line: _open_with_system(path),
+        ),
+    }
+
+
+def find_typora():
+    """
+    Find Typora on this computer.
+
+    Looks where installers put it: on Windows, the App Paths registry entry
+    (per user, then per machine, as the Microsoft Store and the installer
+    register it) and the usual install folders; on a Mac, Typora.app in
+    /Applications or ~/Applications; elsewhere, `typora` on the PATH.
+
+    Returns:
+        list[str] | None: The command that opens a file in Typora (the file's
+            path goes after it), or None when Typora was not found.
+    """
+    if sys.platform == "win32":
+        found = _typora_from_registry() or next(
+            (str(path) for path in _windows_typora_folders() if path.is_file()), None
+        )
+        return [found] if found else None
+    if sys.platform == "darwin":
+        apps = [Path("/Applications"), Path.home() / "Applications"]
+        if any((folder / "Typora.app").is_dir() for folder in apps):
+            return ["open", "-a", "Typora"]
+        return None
+    found = shutil.which("typora")
+    return [found] if found else None
+
+
+def _typora_from_registry():
+    import winreg  # Windows only, so imported here
+
+    key = r"Software\Microsoft\Windows\CurrentVersion\App Paths\Typora.exe"
+    for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(root, key) as entry:
+                path = winreg.QueryValue(entry, None)
+        except OSError:
+            continue
+        if path and Path(path).is_file():
+            return path
+    return None
+
+
+def _windows_typora_folders():
+    for variable in ("LOCALAPPDATA", "ProgramFiles", "ProgramFiles(x86)"):
+        base = os.environ.get(variable)
+        if base:
+            folder = "Programs/Typora" if variable == "LOCALAPPDATA" else "Typora"
+            yield Path(base) / folder / "Typora.exe"
+
+
+def _launch(command):
+    subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _open_with_system(path):
+    if sys.platform == "win32":
+        os.startfile(path)
+    else:
+        _launch(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
+
+
 def show_in_file_browser(folder):
     """
     Show a folder in the system's file browser (Explorer on Windows, Finder on
@@ -71,15 +194,7 @@ def show_in_file_browser(folder):
     Raises:
         OSError: The file browser could not be started.
     """
-    if sys.platform == "win32":
-        os.startfile(folder)
-    else:
-        opener = "open" if sys.platform == "darwin" else "xdg-open"
-        subprocess.Popen(
-            [opener, str(folder)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+    _open_with_system(folder)
 
 
 def choose_folder_dialog(start):

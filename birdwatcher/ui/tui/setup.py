@@ -1,39 +1,69 @@
 """
-The setup page: choose the course folder by typing, pasting or browsing.
+The setup page: choose the course folder (from the recent ones, or by typing,
+pasting or browsing) and the editor that opens files.
 
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Input, Static
+from textual.widgets import (
+    Button,
+    Footer,
+    Header,
+    Input,
+    OptionList,
+    RadioButton,
+    RadioSet,
+    Static,
+)
+from textual.widgets.option_list import Option
 
 from birdwatcher.core.course import DOCS_FOLDER, course_problem
 
 SETUP_INTRO = (
-    "Birdwatcher checks a local clone of the course repository. Enter the path "
-    f"of its folder: the one that contains {DOCS_FOLDER}/."
+    "Birdwatcher checks a local clone of the course repository: the folder that "
+    f"contains {DOCS_FOLDER}/."
 )
 EMPTY_PATH = "Enter the path of the course repository's folder."
+EDITOR_ID_PREFIX = "editor-"
+
+
+@dataclass(frozen=True)
+class SetupChoice:
+    """
+    What the setup page was closed with.
+
+    Attributes:
+        course_dir (Path): The chosen course folder (it can be used).
+        editor (str): The id of the chosen editor.
+    """
+
+    course_dir: Path
+    editor: str
 
 
 class SetupScreen(Screen):
     """
-    The setup page: asks for the course folder, and closes with it once it can
-    be used (or with None when cancelled). See BirdwatcherApp for the behaviour
-    as a whole.
+    The setup page: closes with a SetupChoice once a usable folder is chosen
+    (or with None when cancelled). See BirdwatcherApp for the behaviour as a
+    whole.
 
     Args:
         course_dir (Path | None): The path to fill in.
         problem (str | None): Why that path cannot be used, shown at once.
         can_cancel (bool): Whether Escape closes the page without a choice.
         choose_folder (Callable[[Path | None], Path | None]): The folder picker.
+        recent (Sequence[Path]): Recent course folders, most recent first.
+        editors (Mapping[str, Editor]): The editors on offer, in order.
+        editor (str): The id of the editor to select at first.
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -42,18 +72,43 @@ class SetupScreen(Screen):
         Binding("ctrl+q", "app.quit", "Quit"),
     ]
 
-    def __init__(self, course_dir, problem, *, can_cancel, choose_folder):
+    def __init__(
+        self,
+        course_dir,
+        problem,
+        *,
+        can_cancel,
+        choose_folder,
+        recent=(),
+        editors=None,
+        editor=None,
+    ):
         super().__init__()
         self._course_dir = course_dir
         self._problem = problem
         self._can_cancel = can_cancel
         self._choose_folder = choose_folder
+        self._recent = tuple(recent)
+        self._editors = dict(editors or {})
+        self._editor = editor
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Vertical(id="setup"):
+        with VerticalScroll(id="setup"):
             yield Static("Course folder", id="setup-title")
             yield Static(SETUP_INTRO, id="setup-intro")
+            recent_label = Static("Recent courses", classes="setup-section")
+            recent = OptionList(
+                *(
+                    Option(_recent_prompt(folder), id=str(index))
+                    for index, folder in enumerate(self._recent)
+                ),
+                id="recent",
+            )
+            recent_label.display = recent.display = bool(self._recent)
+            yield recent_label
+            yield recent
+            yield Static("Another folder", classes="setup-section")
             with Horizontal(id="setup-path"):
                 yield Input(
                     value="" if self._course_dir is None else str(self._course_dir),
@@ -61,8 +116,17 @@ class SetupScreen(Screen):
                     id="course-dir",
                 )
                 yield Button("Browse…", id="browse")
+            yield Static("Open files with", classes="setup-section")
+            with RadioSet(id="editor"):
+                for editor in self._editors.values():
+                    yield RadioButton(
+                        _editor_label(editor),
+                        value=editor.id == self._editor,
+                        id=f"{EDITOR_ID_PREFIX}{editor.id}",
+                        disabled=not editor.available,
+                    )
             yield Static(self._problem or "", id="setup-error")
-            with Horizontal():
+            with Horizontal(id="setup-buttons"):
                 yield Button("Save", variant="primary", id="save")
         yield Footer()
 
@@ -76,13 +140,18 @@ class SetupScreen(Screen):
             self.dismiss(None)
 
     def on_input_submitted(self, event: Input.Submitted):
-        self._save()
+        self._choose(self._typed_folder())
 
     def on_button_pressed(self, event: Button.Pressed):
         if event.button.id == "browse":
             self.action_browse()
-        else:
-            self._save()
+        elif event.button.id == "save":
+            self._choose(self._typed_folder())
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected):
+        folder = self._recent[int(event.option.id)]
+        self.query_one("#course-dir", Input).value = str(folder)
+        self._choose(folder)
 
     def action_browse(self):
         text = self._typed()
@@ -97,23 +166,44 @@ class SetupScreen(Screen):
         if chosen is None:
             return
         self.query_one("#course-dir", Input).value = str(chosen)
-        self._save()
+        self._choose(Path(chosen))
 
     def _typed(self):
         # Explorer's "Copy as path" adds quotes; "~" is common on a Mac.
         return self.query_one("#course-dir", Input).value.strip().strip('"')
 
-    def _save(self):
+    def _typed_folder(self):
         text = self._typed()
-        if not text:
+        return Path(text).expanduser() if text else None
+
+    def _choose(self, course_dir):
+        if course_dir is None:
             self._show_problem(EMPTY_PATH)
             return
-        course_dir = Path(text).expanduser()
         problem = course_problem(course_dir)
         if problem:
             self._show_problem(problem)
             return
-        self.dismiss(course_dir)
+        self.dismiss(SetupChoice(course_dir, self._chosen_editor()))
+
+    def _chosen_editor(self):
+        pressed = self.query_one("#editor", RadioSet).pressed_button
+        if pressed is not None:
+            return pressed.id.removeprefix(EDITOR_ID_PREFIX)
+        # The saved editor is not on offer here: keep it rather than guess.
+        return self._editor
 
     def _show_problem(self, problem):
         self.query_one("#setup-error", Static).update(Text(problem))
+
+
+def _recent_prompt(folder):
+    prompt = Text(folder.name or str(folder), style="bold")
+    prompt.append(f"   {folder}", style="dim")
+    return prompt
+
+
+def _editor_label(editor):
+    where = "opens at the exact line" if editor.opens_at_line else "opens at the top"
+    label = f"{editor.name}: {where}"
+    return label if editor.available else f"{label} (not found)"

@@ -5,13 +5,17 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from platformdirs import user_config_dir
 
 CONFIG_FILE = "config.json"
 COURSE_DIR_KEY = "course_dir"
+EDITOR_KEY = "editor"
+RECENT_KEY = "recent"
+DEFAULT_EDITOR = "vscode"
+RECENT_LIMIT = 5  # course folders remembered for quick switching
 
 
 @dataclass(frozen=True)
@@ -21,9 +25,34 @@ class Config:
 
     Attributes:
         course_dir (Path): The local clone of the course repository to check.
+        editor (str): Which editor opens files (an id the user interface
+            understands, such as "vscode").
+        recent (tuple[Path, ...]): Course folders used lately, most recent
+            first.
     """
 
     course_dir: Path
+    editor: str = DEFAULT_EDITOR
+    recent: tuple[Path, ...] = ()
+
+
+def with_course(config, course_dir):
+    """
+    The settings with another course folder chosen.
+
+    Args:
+        config (Config): The current settings.
+        course_dir (Path): The chosen course folder.
+
+    Returns:
+        Config: The same settings with course_dir set and the folder first in
+            the recent list; the list holds no folder twice (the same folder
+            spelled differently counts once) and at most RECENT_LIMIT.
+    """
+    chosen = Path(course_dir).resolve()
+    others = [path for path in config.recent if Path(path).resolve() != chosen]
+    recent = (Path(course_dir), *others)[:RECENT_LIMIT]
+    return replace(config, course_dir=Path(course_dir), recent=recent)
 
 
 def default_config_path():
@@ -46,7 +75,11 @@ def load_config(path):
 
     Returns:
         Config | None: The settings, or None when the file does not exist or
-            cannot be read as settings (it is then treated as not set up).
+            has no readable course folder (it is then treated as not set up).
+            A missing or unreadable editor is DEFAULT_EDITOR; unreadable
+            recent entries are left out, and a file from before the recent
+            list existed (no "recent" key) gets one holding just the course
+            folder.
     """
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -55,7 +88,18 @@ def load_config(path):
     course_dir = data.get(COURSE_DIR_KEY) if isinstance(data, dict) else None
     if not isinstance(course_dir, str):
         return None
-    return Config(course_dir=Path(course_dir))
+    editor = data.get(EDITOR_KEY)
+    listed = data.get(RECENT_KEY, [course_dir])
+    recent = tuple(
+        Path(entry)
+        for entry in (listed if isinstance(listed, list) else [])
+        if isinstance(entry, str)
+    )
+    return Config(
+        course_dir=Path(course_dir),
+        editor=editor if isinstance(editor, str) else DEFAULT_EDITOR,
+        recent=recent,
+    )
 
 
 def save_config(path, config):
@@ -69,5 +113,9 @@ def save_config(path, config):
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = {COURSE_DIR_KEY: str(config.course_dir)}
+    data = {
+        COURSE_DIR_KEY: str(config.course_dir),
+        EDITOR_KEY: config.editor,
+        RECENT_KEY: [str(folder) for folder in config.recent],
+    }
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

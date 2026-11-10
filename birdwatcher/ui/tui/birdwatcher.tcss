@@ -97,7 +97,25 @@ Divider:hover, Divider.-dragging {
     margin-bottom: 1;
 }
 
+.setup-section {
+    text-style: bold;
+    margin-top: 1;
+}
+
+#recent {
+    height: auto;
+    max-height: 8;
+}
+
+#editor {
+    width: auto;
+}
+
 #setup-path {
+    height: auto;
+}
+
+#setup-buttons {
     height: auto;
 }
 

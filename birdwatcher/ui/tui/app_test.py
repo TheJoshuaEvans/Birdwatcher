@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 import pytest
 from rich.console import Console
-from textual.widgets import DataTable, Input, Static
+from textual.widgets import DataTable, Input, OptionList, RadioButton, Static
 
 from birdwatcher.core.check import Check
 from birdwatcher.core.config import Config, load_config, save_config
@@ -20,6 +20,7 @@ from birdwatcher.core.findings import Destination, Finding, Fix, Severity
 from birdwatcher.core.fix_log import FIX_LOG_FILE, load_fixed
 from birdwatcher.core.ignores import IGNORE_FILE, load_ignores
 from birdwatcher.core.run import CheckResult, RunResult
+from birdwatcher.ui.system import Editor
 from birdwatcher.ui.tui.app import BirdwatcherApp
 from birdwatcher.ui.tui.divider import Divider
 
@@ -73,20 +74,49 @@ class FakeChooser:
         return self.outcome
 
 
+def fake_editors(opened, in_typora=None, typora_found=True):
+    """Editors that record what they open: VS Code into `opened`, Typora into
+    `in_typora`, the default app into neither."""
+    in_typora = [] if in_typora is None else in_typora
+    return {
+        "vscode": Editor(
+            "vscode", "VS Code", True, True, lambda p, n: opened.append((p, n))
+        ),
+        "typora": Editor(
+            "typora",
+            "Typora",
+            False,
+            typora_found,
+            lambda p, n: in_typora.append((p, n)),
+        ),
+        "default": Editor(
+            "default", "The file's default app", False, True, lambda p, n: None
+        ),
+    }
+
+
 def make_app(
-    tmp_path, checker, course=None, opened=None, chooser=None, urls=None, shown=None
+    tmp_path,
+    checker,
+    course=None,
+    opened=None,
+    chooser=None,
+    urls=None,
+    shown=None,
+    editors=None,
 ):
     """An app whose config names `course` (no config when course is None)."""
     config_path = tmp_path / "settings" / "config.json"
     if course is not None:
-        save_config(config_path, Config(course_dir=course))
+        # As the app saves it: the course is also its only recent course.
+        save_config(config_path, Config(course_dir=course, recent=(course,)))
     opened = [] if opened is None else opened
     urls = [] if urls is None else urls
     shown = [] if shown is None else shown
     app = BirdwatcherApp(
         config_path,
         check=checker,
-        open_in_editor=lambda path, line: opened.append((path, line)),
+        editors=editors or fake_editors(opened),
         choose_folder=chooser or FakeChooser(),
         open_url=urls.append,
         show_folder=shown.append,
@@ -181,7 +211,7 @@ def test_saving_a_course_folder_remembers_it_and_checks_it(tmp_path, submit):
     async def steps(app, pilot):
         await enter_folder(app, pilot, course, submit)
         assert not on_setup(app)
-        assert load_config(config_path) == Config(course_dir=course)
+        assert load_config(config_path).course_dir == course
         assert checker.folders == [course]
         assert len(table_text(app)) == 1
 
@@ -215,7 +245,7 @@ def test_browsing_to_a_course_folder_saves_and_checks_it(tmp_path, how):
             await pilot.press("ctrl+o")
         await settle(app, pilot)
         assert not on_setup(app)
-        assert load_config(config_path) == Config(course_dir=course)
+        assert load_config(config_path).course_dir == course
         assert checker.folders == [course]
 
     drive(app, steps)
@@ -292,6 +322,113 @@ def test_no_folder_picker_is_explained_on_the_page(tmp_path):
     drive(app, steps)
 
 
+def test_first_run_has_no_recent_courses_to_offer(tmp_path):
+    app, _ = make_app(tmp_path, FakeChecker())
+
+    async def steps(app, pilot):
+        assert not is_visible(app, "#recent")
+
+    drive(app, steps)
+
+
+def test_picking_a_recent_course_switches_to_it(tmp_path):
+    first = make_course(tmp_path / "first")
+    second = make_course(tmp_path / "second")
+    checker = FakeChecker([FIRST], [SECOND])
+    app, config_path = make_app(tmp_path, checker)
+    save_config(config_path, Config(course_dir=first, recent=(first, second)))
+
+    async def steps(app, pilot):
+        await press(app, pilot, "s")
+        recent = app.screen.query_one("#recent", OptionList)
+        assert recent.option_count == 2
+        recent.focus()
+        recent.highlighted = 1
+        await press(app, pilot, "enter")
+        assert checker.folders == [first, second]
+        config = load_config(config_path)
+        assert config.course_dir == second
+        assert config.recent == (second, first)
+
+    drive(app, steps)
+
+
+def test_a_recent_course_that_is_gone_is_explained(tmp_path):
+    first = make_course(tmp_path / "first")
+    gone = tmp_path / "gone"
+    app, config_path = make_app(tmp_path, FakeChecker([FIRST]))
+    save_config(config_path, Config(course_dir=first, recent=(first, gone)))
+
+    async def steps(app, pilot):
+        await press(app, pilot, "s")
+        recent = app.screen.query_one("#recent", OptionList)
+        recent.focus()
+        recent.highlighted = 1
+        await press(app, pilot, "enter")
+        assert on_setup(app)
+        assert "gone" in setup_error(app)
+
+    drive(app, steps)
+
+
+def test_saving_a_new_folder_adds_it_to_the_recent_courses(tmp_path):
+    first = make_course(tmp_path / "first")
+    second = make_course(tmp_path / "second")
+    app, config_path = make_app(tmp_path, FakeChecker([FIRST]), first)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "s")
+        await enter_folder(app, pilot, second)
+        assert load_config(config_path).recent == (second, first)
+
+    drive(app, steps)
+
+
+def test_choosing_typora_opens_files_in_typora(tmp_path):
+    course = make_course(tmp_path / "course")
+    opened, in_typora = [], []
+    editors = fake_editors(opened, in_typora)
+    app, config_path = make_app(tmp_path, FakeChecker([FIRST]), course, editors=editors)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "s")
+        await pilot.click("#editor-typora")
+        await pilot.click("#save")
+        await settle(app, pilot)
+        assert load_config(config_path).editor == "typora"
+        await press(app, pilot, "o")
+        assert in_typora == [(course / "docs/A.md", 3)]
+        assert opened == []
+
+    drive(app, steps)
+
+
+def test_the_saved_editor_is_selected_on_the_setup_page(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, config_path = make_app(tmp_path, FakeChecker([FIRST]))
+    save_config(config_path, Config(course_dir=course, editor="typora"))
+
+    async def steps(app, pilot):
+        await press(app, pilot, "s")
+        assert app.screen.query_one("#editor-typora", RadioButton).value
+        assert not app.screen.query_one("#editor-vscode", RadioButton).value
+
+    drive(app, steps)
+
+
+def test_editors_that_were_not_found_cannot_be_chosen(tmp_path):
+    course = make_course(tmp_path / "course")
+    editors = fake_editors([], typora_found=False)
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course, editors=editors)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "s")
+        assert app.screen.query_one("#editor-typora", RadioButton).disabled
+        assert not app.screen.query_one("#editor-vscode", RadioButton).disabled
+
+    drive(app, steps)
+
+
 def test_a_saved_course_opens_straight_to_the_findings(tmp_path):
     course = make_course(tmp_path / "course")
     checker = FakeChecker([FIRST, SECOND])
@@ -331,7 +468,7 @@ def test_s_opens_setup_filled_in_and_escape_returns_unchanged(tmp_path):
         await pilot.press("escape")
         await settle(app, pilot)
         assert not on_setup(app)
-        assert load_config(config_path) == Config(course_dir=course)
+        assert load_config(config_path).course_dir == course
         assert checker.folders == [course]
 
     drive(app, steps)
@@ -348,7 +485,7 @@ def test_choosing_another_course_checks_that_one(tmp_path):
         await pilot.pause()
         await enter_folder(app, pilot, second)
         assert checker.folders == [first, second]
-        assert load_config(config_path) == Config(course_dir=second)
+        assert load_config(config_path).course_dir == second
         assert str(second) in app.sub_title
         assert "docs/B.md" in table_text(app)[0]
 
@@ -578,9 +715,8 @@ def test_editor_failure_does_not_close_the_app(tmp_path):
     def broken_editor(path, line):
         raise FileNotFoundError("code")
 
-    app = BirdwatcherApp(
-        config_path, check=FakeChecker([FIRST]), open_in_editor=broken_editor
-    )
+    editors = {"vscode": Editor("vscode", "VS Code", True, True, broken_editor)}
+    app = BirdwatcherApp(config_path, check=FakeChecker([FIRST]), editors=editors)
 
     async def steps(app, pilot):
         await pilot.press("enter")
