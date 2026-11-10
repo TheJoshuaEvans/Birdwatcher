@@ -7,8 +7,28 @@
 
 #detail-scroll {
     width: 1fr;
-    border-left: tall $accent;
     padding: 0 1;
+}
+
+#excerpt-scroll {
+    height: auto;
+}
+
+#excerpt {
+    width: auto;
+}
+
+/* The draggable bar between the findings list and the detail panel. The
+   pointer shape shows only in terminals that support it (OSC 22). */
+Divider {
+    width: 1;
+    height: 1fr;
+    background: $accent;
+    pointer: ew-resize;
+}
+
+Divider:hover, Divider.-dragging {
+    background: $accent-lighten-2;
 }
 
 /* Setup page */

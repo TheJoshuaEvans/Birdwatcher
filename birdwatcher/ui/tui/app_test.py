@@ -18,6 +18,7 @@ from birdwatcher.core.config import Config, load_config, save_config
 from birdwatcher.core.findings import Finding, Severity
 from birdwatcher.core.run import CheckResult, RunResult
 from birdwatcher.ui.tui.app import BirdwatcherApp
+from birdwatcher.ui.tui.divider import Divider
 
 CHECK = Check(
     id="links", title="Broken section links", description="d", run=lambda c: []
@@ -101,15 +102,19 @@ async def settle(app, pilot):
     await pilot.pause()
 
 
-def render_text(renderable):
+def render_text(renderable, width=120):
     buffer = io.StringIO()
-    Console(file=buffer, width=120, color_system=None).print(renderable)
+    Console(file=buffer, width=width, color_system=None).print(renderable)
     return buffer.getvalue()
 
 
 def panel_text(app):
-    """The detail panel's content as plain text."""
-    return render_text(app.screen.query_one("#detail", Static).content)
+    """The detail panel's content (message and source excerpt) as plain text."""
+    parts = [app.screen.query_one("#detail", Static).content]
+    excerpt = app.screen.query_one("#excerpt", Static)
+    if excerpt.display:
+        parts.append(excerpt.content)
+    return "".join(render_text(part) for part in parts)
 
 
 def setup_error(app):
@@ -392,6 +397,35 @@ def test_panel_shows_the_source_lines_around_the_finding(tmp_path):
     drive(app, steps)
 
 
+def test_long_source_lines_scroll_sideways_instead_of_wrapping(tmp_path):
+    course = make_course(tmp_path / "course")
+    long_line = "x" * 300
+    (course / "docs" / "A.md").write_text(
+        f"one\ntwo\n{long_line}\nfour\n", encoding="utf-8"
+    )
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course)
+
+    async def steps(app, pilot):
+        excerpt = app.screen.query_one("#excerpt", Static)
+        view = app.screen.query_one("#excerpt-scroll")
+        assert excerpt.size.width > view.size.width
+        assert long_line in render_text(excerpt.content, width=400)
+
+    drive(app, steps)
+
+
+def test_the_message_still_wraps_to_the_panel(tmp_path):
+    course = make_course(tmp_path / "course")
+    wordy = Finding("links", Severity.ERROR, "docs/A.md", 3, "word " * 100)
+    app, _ = make_app(tmp_path, FakeChecker([wordy]), course)
+
+    async def steps(app, pilot):
+        message = app.screen.query_one("#detail", Static)
+        assert message.size.width <= app.screen.query_one("#detail-scroll").size.width
+
+    drive(app, steps)
+
+
 @pytest.mark.parametrize("key", ["enter", "o"])
 def test_enter_or_o_opens_the_finding_in_the_editor(tmp_path, key):
     course = make_course(tmp_path / "course")
@@ -433,6 +467,23 @@ def test_first_click_shows_a_finding_and_second_click_opens_it(tmp_path):
         await pilot.click(DataTable, offset=second_row)
         await pilot.pause()
         assert opened == [(course / "docs/B.md", 2)]
+
+    drive(app, steps)
+
+
+def test_dragging_the_divider_resizes_the_findings_list(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
+
+    async def steps(app, pilot):
+        table = app.screen.query_one(DataTable)
+        before = table.size.width
+        destination = (app.screen.query_one(Divider).region.x - 12, 5)
+        await pilot.mouse_down(Divider)
+        await pilot.hover(None, offset=destination)
+        await pilot.mouse_up(None, offset=destination)
+        await pilot.pause()
+        assert table.size.width == before - 12
 
     drive(app, steps)
 

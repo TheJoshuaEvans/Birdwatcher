@@ -6,19 +6,20 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 
 from typing import ClassVar
 
-from rich.console import Group
 from rich.syntax import Syntax
 from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, HorizontalScroll, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
 from birdwatcher.ui.severity import SEVERITY_STYLES
+from birdwatcher.ui.tui.divider import Divider
 
 CONTEXT_LINES = 6  # source lines shown above and below a finding
+MIN_PANE_WIDTH = 20  # columns each side keeps when the divider is dragged
 NO_FINDINGS = "No findings. Every check came back clean."
 
 
@@ -51,8 +52,13 @@ class FindingsScreen(Screen):
         yield Header()
         with Horizontal():
             yield DataTable(id="findings", cursor_type="row", zebra_stripes=True)
+            yield Divider("#findings", min_width=MIN_PANE_WIDTH)
             with VerticalScroll(id="detail-scroll"):
                 yield Static("Checking the course...", id="detail")
+                # Source lines keep their shape and scroll sideways; the
+                # message above wraps to the panel.
+                with HorizontalScroll(id="excerpt-scroll"):
+                    yield Static(id="excerpt")
         yield Footer()
 
     def on_mount(self):
@@ -82,6 +88,7 @@ class FindingsScreen(Screen):
     def _show_error(self, error):
         self.app.sub_title = f"{self.course_dir}  ·  check failed"
         self._detail().update(Text(f"Could not check the course: {error}", style="red"))
+        self._show_excerpt(None)
 
     def _show(self, run):
         self._run = run
@@ -100,6 +107,7 @@ class FindingsScreen(Screen):
         table.focus()
         if not run.findings:
             self._detail().update(NO_FINDINGS)
+            self._show_excerpt(None)
             return
         table.move_cursor(row=min(max(previous_row, 0), count - 1))
         self._show_finding(table.cursor_row)
@@ -126,11 +134,13 @@ class FindingsScreen(Screen):
         header.append("\n\n")
         header.append(finding.message)
         header.append("\n")
-        parts = [header]
-        excerpt = self._excerpt(finding)
-        if excerpt is not None:
-            parts.append(excerpt)
-        self._detail().update(Group(*parts))
+        self._detail().update(header)
+        self._show_excerpt(self._excerpt(finding))
+
+    def _show_excerpt(self, syntax):
+        excerpt = self.query_one("#excerpt", Static)
+        excerpt.display = syntax is not None
+        excerpt.update("" if syntax is None else syntax)
 
     def _excerpt(self, finding):
         source = self._run.file_of(finding)
@@ -145,7 +155,7 @@ class FindingsScreen(Screen):
             line_numbers=True,
             start_line=first,
             highlight_lines={finding.line},
-            word_wrap=True,
+            word_wrap=False,
             theme="monokai",
         )
 
