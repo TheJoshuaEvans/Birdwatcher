@@ -93,7 +93,8 @@ def check_anchors(repo_root, site_url):
     site), outside fenced code blocks and inline code. A link counts when it
     points into the site: "#id" on the same page, a relative path to a .md or
     .html page or to a folder (its index page, or its README.md when it has no
-    index), or a full address starting with site_url. A section exists when
+    index), or a full address starting with site_url (when site_url is
+    given; otherwise full addresses are left alone). A section exists when
     a heading has that id (kramdown's rule, repeats numbered "-1", "-2", ...),
     or an explicit id is given by "{#id}" after a heading or by an HTML id or
     name attribute. "#top" and a bare "#" always exist. Links to pages that do
@@ -101,7 +102,8 @@ def check_anchors(repo_root, site_url):
 
     Args:
         repo_root (Path): Root folder of the course repository.
-        site_url (str): Published site address, as from published_site_url.
+        site_url (str | None): Published site address, as from
+            published_site_url, or None when it is not known.
 
     Returns:
         list[Finding]: One error per broken link, at the link's line, naming the
@@ -221,7 +223,7 @@ def _resolve(page, target, docs, site_url):
     target = target.strip()
     if "#" not in target:
         return None
-    if target.startswith(site_url):
+    if site_url and target.startswith(site_url):
         base, target = docs, target[len(site_url) :]
     elif URL_SCHEME.match(target) or target.startswith("/"):
         return None

@@ -6,7 +6,7 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 
 ## What it does
 
-Birdwatcher downloads Brian Bird's public course repository, [lcc-cit/CS212-CourseMaterials](https://github.com/lcc-cit/CS212-CourseMaterials), runs static checks over it, and shows each problem it finds in an interactive terminal app: open the exact file and line in an editor or on GitHub, fix it, and re-run the checks to confirm the fix.
+Birdwatcher runs static checks over a local clone of Brian Bird's course repository, [lcc-cit/CS212-CourseMaterials](https://github.com/lcc-cit/CS212-CourseMaterials), and shows each problem it finds in an interactive terminal app: open the exact file and line in an editor, fix it, and re-run the checks to confirm the fix.
 
 The course repository already checks that its links resolve, using [lychee](https://lychee.cli.rs/) in GitHub Actions. Birdwatcher looks for what a link checker can't see: links to sections that don't exist, files left over from renumbering, accessibility problems, and code that breaks the course's own style rules.
 
@@ -27,8 +27,11 @@ uv run pytest
 uv run birdwatcher                    # open the app
 uv run birdwatcher check              # check once and print a summary
 uv run birdwatcher check --verbose    # ... with progress and every finding
+uv run birdwatcher check --course-dir C:\path\to\CS212-CourseMaterials
 uv run birdwatcher check --list-checks
 ```
+
+The first time the app opens, it asks for the folder of your local clone of the course repository (the folder that contains `docs/`) and remembers it. `birdwatcher check` uses the same folder unless `--course-dir` names another.
 
 In the app, mouse and keyboard both work:
 
@@ -36,27 +39,23 @@ In the app, mouse and keyboard both work:
 |---|---|
 | Click a finding, or use the arrow keys | Show it: check, location, message, and the source lines around it |
 | Click it again, or press Enter or `o` | Open the file at that line in VS Code |
-| `g` | Open the line on GitHub, at the checked commit |
-| `r` | Run the checks again |
+| `r` | Run the checks again, after fixing something |
+| `s` | Choose another course folder |
 | `q` | Quit |
 
 Opening files in VS Code needs its `code` command on the PATH. The Windows installer adds it; on a Mac, run VS Code's command **Shell Command: Install 'code' command in PATH** once.
 
 ## How it works
 
-### Downloading and caching
+### The course folder
 
-Each run asks GitHub for the latest commit on the course repository's `main` branch. If the local cache already holds that commit, the cached copy is used and nothing is downloaded. Otherwise the zip archive of exactly that commit is downloaded and replaces the cached copy.
+Birdwatcher reads the course from a local clone, so it sees edits before they are committed: fix a problem, press `r`, and the finding is gone. The chosen folder is saved in `config.json` in your user config folder (on Windows, under `%LOCALAPPDATA%\birdwatcher`).
 
-- Without a network connection, the cached copy is used and reported as possibly out of date.
-- Every path in the archive is checked before anything is extracted, so an archive cannot write outside the cache.
-- An interrupted download never leaves a partial copy that a later run would trust.
+Pages sometimes link to their own sections with the published site's full address (`https://lcc-cit.github.io/...`). Birdwatcher works out that address from the clone's `origin` remote on GitHub, reading the git config directly, so git itself is not needed. Submodule checkouts work too.
 
 ### Findings
 
-Checks produce findings as plain data: the check, the severity, the file and line, and a message. The app and `birdwatcher check` are two views of the same findings, built with [Textual](https://textual.textualize.io/) and [Rich](https://rich.readthedocs.io/).
-
-Each finding links to its source line on GitHub, at the commit that was checked, so the link stays correct after the file changes.
+Checks produce findings as plain data: the check, the severity, the file and line, and a message. The app and `birdwatcher check` are two views of the same findings, built with [Textual](https://textual.textualize.io/) and [Rich](https://rich.readthedocs.io/). In `birdwatcher check --verbose`, each file and line number is a `vscode://` link that opens it in VS Code.
 
 ## Checks
 
@@ -87,4 +86,4 @@ Each finding links to its source line on GitHub, at the commit that was checked,
 
 ## Course materials
 
-The course materials belong to Brian Bird and carry their own license notices. Birdwatcher downloads them only to analyze them, and keeps the copy in a local cache.
+The course materials belong to Brian Bird and carry their own license notices. Birdwatcher only reads them; it never changes the course files.

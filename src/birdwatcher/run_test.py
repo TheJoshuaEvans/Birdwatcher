@@ -11,14 +11,11 @@ from pathlib import Path
 import pytest
 
 from birdwatcher.checks import Check
-from birdwatcher.fetch import Snapshot
 from birdwatcher.findings import Finding, Severity
 from birdwatcher.run import CheckFinished, CheckStarted, RunResult, run_checks
 
-REPO = "lcc-cit/CS212-CourseMaterials"
-COMMIT = "a" * 40
+COURSE = Path("course")
 SITE = "https://lcc-cit.github.io/CS212-CourseMaterials/"
-SNAPSHOT = Snapshot(root=Path("course"), commit=COMMIT, downloaded=True, stale=False)
 
 
 def finding(check, path, line, severity=Severity.ERROR):
@@ -36,27 +33,23 @@ def fake_check(check_id, findings=(), error=None, seen=None):
     return Check(id=check_id, title=check_id.title(), description="d", run=run)
 
 
-def test_runs_each_check_with_the_snapshot_context():
+def test_runs_each_check_with_the_course_context():
     seen = []
-    run_checks(SNAPSHOT, REPO, [fake_check("one", seen=seen)], site_url=SITE)
+    run_checks(COURSE, [fake_check("one", seen=seen)], site_url=SITE)
     [context] = seen
-    assert (context.root, context.repo, context.commit, context.site_url) == (
-        SNAPSHOT.root,
-        REPO,
-        COMMIT,
-        SITE,
-    )
+    assert (context.root, context.site_url) == (COURSE, SITE)
+
+
+def test_site_url_is_optional():
+    seen = []
+    run_checks(COURSE, [fake_check("one", seen=seen)])
+    assert seen[0].site_url is None
 
 
 def test_result_describes_the_run():
     before = datetime.now(UTC)
-    result = run_checks(SNAPSHOT, REPO, [fake_check("one")], site_url=SITE)
-    assert (result.repo, result.commit, result.downloaded, result.stale) == (
-        REPO,
-        COMMIT,
-        True,
-        False,
-    )
+    result = run_checks(COURSE, [fake_check("one")])
+    assert result.course_dir == COURSE
     assert result.started_at.tzinfo is not None
     assert before <= result.started_at <= datetime.now(UTC)
 
@@ -65,10 +58,7 @@ def test_results_keep_check_order_and_their_findings():
     first = finding("one", "docs/B.md", 2)
     second = finding("two", "docs/A.md", 1)
     result = run_checks(
-        SNAPSHOT,
-        REPO,
-        [fake_check("one", [first]), fake_check("two", [second])],
-        site_url=SITE,
+        COURSE, [fake_check("one", [first]), fake_check("two", [second])]
     )
     assert [r.check.id for r in result.results] == ["one", "two"]
     assert result.results[0].findings == (first,)
@@ -79,10 +69,8 @@ def test_results_keep_check_order_and_their_findings():
 def test_a_failing_check_does_not_stop_the_run():
     survivor = finding("two", "docs/A.md", 1)
     result = run_checks(
-        SNAPSHOT,
-        REPO,
+        COURSE,
         [fake_check("one", error=ValueError("boom")), fake_check("two", [survivor])],
-        site_url=SITE,
     )
     failed, worked = result.results
     assert failed.findings == ()
@@ -93,10 +81,8 @@ def test_a_failing_check_does_not_stop_the_run():
 def test_events_arrive_in_order_as_checks_run():
     events = []
     run_checks(
-        SNAPSHOT,
-        REPO,
+        COURSE,
         [fake_check("one"), fake_check("two", error=RuntimeError("x"))],
-        site_url=SITE,
         on_event=events.append,
     )
     kinds = [
@@ -118,10 +104,7 @@ def test_events_arrive_in_order_as_checks_run():
 
 def make_run(*per_check):
     return run_checks(
-        SNAPSHOT,
-        REPO,
-        [fake_check(f"c{n}", findings) for n, findings in enumerate(per_check)],
-        site_url=SITE,
+        COURSE, [fake_check(f"c{n}", findings) for n, findings in enumerate(per_check)]
     )
 
 
@@ -144,26 +127,10 @@ def test_count_by_severity():
     assert result.count(Severity.INFO) == 0
 
 
-@pytest.mark.parametrize(
-    ("path", "line", "expected"),
-    [
-        (
-            "docs/Page.md",
-            12,
-            f"https://github.com/{REPO}/blob/{COMMIT}/docs/Page.md#L12",
-        ),
-        ("docs/Page.md", None, f"https://github.com/{REPO}/blob/{COMMIT}/docs/Page.md"),
-        (
-            "docs/Lesson Plans/Week #1.md",
-            3,
-            f"https://github.com/{REPO}/blob/{COMMIT}/docs/Lesson%20Plans/Week%20%231.md#L3",
-        ),
-    ],
-    ids=["with-line", "whole-file", "needs-encoding"],
-)
-def test_source_url_points_at_the_checked_commit(path, line, expected):
-    result = RunResult(REPO, COMMIT, True, False, datetime.now(UTC), ())
-    assert result.source_url(finding("c", path, line)) == expected
+def test_file_of_a_finding_is_inside_the_course_folder():
+    result = RunResult(COURSE, datetime.now(UTC), ())
+    found = finding("c", "docs/Lesson Plans/Week 1.md", 3)
+    assert result.file_of(found) == COURSE / "docs" / "Lesson Plans" / "Week 1.md"
 
 
 if __name__ == "__main__":

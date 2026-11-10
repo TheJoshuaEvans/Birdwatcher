@@ -1,13 +1,13 @@
 """
-Running checks over a course snapshot, and the result that reports are built from.
+Running checks over a course folder, and the result the app and console show.
 
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
 import time
-import urllib.parse
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
 from birdwatcher.checks import Check, CheckContext
 from birdwatcher.findings import Finding
@@ -33,21 +33,15 @@ class CheckResult:
 
 @dataclass(frozen=True)
 class RunResult:
-    """Everything a report needs about one run.
+    """Everything the app and the console need about one run.
 
     Attributes:
-        repo: GitHub repository as "owner/name".
-        commit: Full SHA of the commit that was checked.
-        downloaded: True if the course files were downloaded for this run.
-        stale: True if the cached files may be older than the repository.
+        course_dir: The course folder that was checked.
         started_at: When the run started, timezone-aware (UTC).
         results: One CheckResult per check, in the order the checks were given.
     """
 
-    repo: str
-    commit: str
-    downloaded: bool
-    stale: bool
+    course_dir: Path
     started_at: datetime
     results: tuple[CheckResult, ...]
 
@@ -80,20 +74,17 @@ class RunResult:
             if finding.severity == severity
         )
 
-    def source_url(self, finding):
+    def file_of(self, finding):
         """
-        Link to a finding's file (and line) on GitHub, at the checked commit.
+        The file a finding is about.
 
         Args:
             finding (Finding): A finding from this run.
 
         Returns:
-            str: "https://github.com/<repo>/blob/<commit>/<path>", with "#L<line>"
-                when the finding has a line; the path is URL-encoded.
+            Path: The finding's path inside the course folder.
         """
-        path = urllib.parse.quote(finding.path, safe="/")
-        url = f"https://github.com/{self.repo}/blob/{self.commit}/{path}"
-        return url if finding.line is None else f"{url}#L{finding.line}"
+        return self.course_dir / finding.path
 
 
 @dataclass(frozen=True)
@@ -110,18 +101,18 @@ class CheckFinished:
     result: CheckResult
 
 
-def run_checks(snapshot, repo, checks, *, site_url, on_event=None):
+def run_checks(course_dir, checks, *, site_url=None, on_event=None):
     """
-    Run checks over a course snapshot and collect the results.
+    Run checks over a course folder and collect the results.
 
     A check that raises does not stop the run: its CheckResult records the error
     and the remaining checks still run.
 
     Args:
-        snapshot (Snapshot): The course files, from fetch.ensure_materials.
-        repo (str): GitHub repository as "owner/name".
+        course_dir (Path): The course folder.
         checks (Iterable[Check]): The checks to run, in order.
-        site_url (str): Address of the repository's published site.
+        site_url (str | None): Address of the course's published site, when
+            known.
         on_event (Callable | None): Called with a CheckStarted before each check
             and a CheckFinished after it, as they happen.
 
@@ -129,9 +120,7 @@ def run_checks(snapshot, repo, checks, *, site_url, on_event=None):
         RunResult: The results, stamped with the time the run started.
     """
     started_at = datetime.now(UTC)
-    context = CheckContext(
-        root=snapshot.root, repo=repo, commit=snapshot.commit, site_url=site_url
-    )
+    context = CheckContext(root=course_dir, site_url=site_url)
     notify = on_event or (lambda event: None)
     results = []
     for check in checks:
@@ -145,12 +134,7 @@ def run_checks(snapshot, repo, checks, *, site_url, on_event=None):
         results.append(result)
         notify(CheckFinished(result))
     return RunResult(
-        repo=repo,
-        commit=snapshot.commit,
-        downloaded=snapshot.downloaded,
-        stale=snapshot.stale,
-        started_at=started_at,
-        results=tuple(results),
+        course_dir=course_dir, started_at=started_at, results=tuple(results)
     )
 
 

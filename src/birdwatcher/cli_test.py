@@ -1,5 +1,5 @@
 """
-Contract tests for birdwatcher.cli. GitHub is replaced by an in-memory fake.
+Contract tests for birdwatcher.cli.
 
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
@@ -7,7 +7,6 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 import asyncio
 import io
 import sys
-import zipfile
 
 import pytest
 from rich.console import Console
@@ -15,79 +14,95 @@ from textual.widgets import DataTable
 
 from birdwatcher.checks import ALL_CHECKS
 from birdwatcher.cli import EXIT_FAILED, EXIT_OK, main
+from birdwatcher.config import Config, save_config
 from birdwatcher.tui import BirdwatcherApp
 
-SHA = "c" * 40
 BROKEN_PAGE = "[Jump](#nowhere)\n\n## Somewhere\n"
 
 
-def course_archive():
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr(f"CS212-CourseMaterials-{SHA}/docs/Page.md", BROKEN_PAGE)
-    return buffer.getvalue()
+def make_course(folder):
+    (folder / "docs").mkdir(parents=True)
+    (folder / "docs" / "Page.md").write_text(BROKEN_PAGE, encoding="utf-8")
+    return folder
 
 
-def fake_fetch(online=True):
-    def fetch(url, headers):
-        if not online:
-            raise OSError("offline")
-        return SHA.encode() if "api.github.com" in url else course_archive()
-
-    return fetch
-
-
-def run(tmp_path, *args, online=True):
-    """Run main with a fake GitHub, a captured console and a recorded app launch."""
+def run(tmp_path, *args, course=None):
+    """Run main with a config naming `course` (none when course is None), a
+    captured console and a recorded app launch."""
+    config_path = tmp_path / "settings" / "config.json"
+    if course is not None:
+        save_config(config_path, Config(course_dir=course))
     buffer = io.StringIO()
     apps = []
     status = main(
-        ["--cache-dir", str(tmp_path / "cache"), *args],
-        fetch=fake_fetch(online),
+        list(args),
+        config_path=config_path,
         console=Console(file=buffer, width=160, color_system=None),
         run_app=apps.append,
     )
     return status, buffer.getvalue(), apps
 
 
-def test_no_command_opens_the_app_on_the_course(tmp_path):
-    status, _, apps = run(tmp_path)
+def test_no_command_opens_the_app_on_the_saved_course(tmp_path):
+    course = make_course(tmp_path / "course")
+    status, _, apps = run(tmp_path, course=course)
     assert status == EXIT_OK
     [app] = apps
     assert isinstance(app, BirdwatcherApp)
 
     async def drive():
         async with app.run_test() as pilot:
+            await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            table = app.query_one(DataTable)
+            table = app.screen.query_one(DataTable)
             assert table.row_count == 1
             assert "docs/Page.md" in [str(cell) for cell in table.get_row_at(0)]
 
     asyncio.run(drive())
 
 
-def test_check_prints_a_summary_without_opening_the_app(tmp_path):
-    status, text, apps = run(tmp_path, "check")
+def test_check_prints_a_summary_of_the_saved_course(tmp_path):
+    course = make_course(tmp_path / "course")
+    status, text, apps = run(tmp_path, "check", course=course)
     assert status == EXIT_OK
     assert apps == []
-    assert "lcc-cit/CS212-CourseMaterials" in text
+    assert str(course) in text
     assert "1 finding" in text
     assert "#nowhere" not in text  # findings only with --verbose
 
 
+def test_course_dir_option_overrides_the_saved_course(tmp_path):
+    saved = make_course(tmp_path / "saved")
+    other = make_course(tmp_path / "other")
+    _, text, _ = run(tmp_path, "check", "--course-dir", str(other), course=saved)
+    assert str(other) in text
+
+
+def test_check_without_any_course_explains_how_to_set_one(tmp_path):
+    status, text, _ = run(tmp_path, "check")
+    assert status == EXIT_FAILED
+    assert "--course-dir" in text
+
+
+def test_check_on_an_unusable_folder_says_why(tmp_path):
+    status, text, _ = run(tmp_path, "check", "--course-dir", str(tmp_path / "nowhere"))
+    assert status == EXIT_FAILED
+    assert "nowhere" in text
+
+
 def test_check_verbose_prints_progress_and_findings(tmp_path):
-    _, text, _ = run(tmp_path, "check", "--verbose")
+    course = make_course(tmp_path / "course")
+    _, text, _ = run(tmp_path, "check", "--verbose", course=course)
     assert "#nowhere" in text
     assert ALL_CHECKS[0].title in text
 
 
-def test_list_checks_prints_them_without_fetching(tmp_path):
-    status, text, _ = run(tmp_path, "check", "--list-checks", online=False)
+def test_list_checks_needs_no_course(tmp_path):
+    status, text, _ = run(tmp_path, "check", "--list-checks")
     assert status == EXIT_OK
     for check in ALL_CHECKS:
         assert check.id in text
-    assert "offline" not in text
 
 
 def test_unknown_check_is_a_usage_error(tmp_path):
@@ -97,27 +112,10 @@ def test_unknown_check_is_a_usage_error(tmp_path):
 
 
 def test_selected_checks_only(tmp_path):
-    status, text, _ = run(tmp_path, "check", "--check", ALL_CHECKS[0].id)
+    course = make_course(tmp_path / "course")
+    status, text, _ = run(tmp_path, "check", "--check", ALL_CHECKS[0].id, course=course)
     assert status == EXIT_OK
     assert ALL_CHECKS[0].id in text
-
-
-def test_check_fails_with_a_message_when_the_course_is_unreachable(tmp_path):
-    status, text, _ = run(tmp_path, "check", online=False)
-    assert status == EXIT_FAILED
-    assert "offline" in text
-
-
-def test_shared_options_also_work_after_the_command(tmp_path):
-    cache = tmp_path / "after"
-    status = main(
-        ["check", "--cache-dir", str(cache)],
-        fetch=fake_fetch(),
-        console=Console(file=io.StringIO(), color_system=None),
-        run_app=lambda app: None,
-    )
-    assert status == EXIT_OK
-    assert cache.is_dir()
 
 
 if __name__ == "__main__":

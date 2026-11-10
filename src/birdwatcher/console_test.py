@@ -7,17 +7,17 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 import io
 import sys
 from datetime import UTC, datetime
+from pathlib import PurePosixPath, PureWindowsPath
 
 import pytest
 from rich.console import Console
 
 from birdwatcher.checks import Check
-from birdwatcher.console import print_event, print_findings, print_summary
+from birdwatcher.console import editor_url, print_event, print_findings, print_summary
 from birdwatcher.findings import Finding, Severity
 from birdwatcher.run import CheckFinished, CheckResult, CheckStarted, RunResult
 
-REPO = "lcc-cit/CS212-CourseMaterials"
-COMMIT = "abcdef1234" + "0" * 30
+COURSE = PureWindowsPath(r"C:\courses\CS212")  # behaves the same on every OS
 CHECK = Check(
     id="links", title="Broken section links", description="d", run=lambda c: []
 )
@@ -28,14 +28,12 @@ FINDINGS = (
 )
 
 
-def make_run(downloaded=False, stale=False):
+def make_run():
     results = (
         CheckResult(CHECK, FINDINGS, 0.25),
         CheckResult(FAILED, (), 0.01, error="ValueError: boom"),
     )
-    return RunResult(
-        REPO, COMMIT, downloaded, stale, datetime(2026, 11, 10, tzinfo=UTC), results
-    )
+    return RunResult(COURSE, datetime(2026, 11, 10, tzinfo=UTC), results)
 
 
 def capture(terminal=False):
@@ -57,40 +55,39 @@ def capture(terminal=False):
     return console, buffer
 
 
-def test_summary_names_the_course_commit_checks_and_totals():
+def test_summary_names_the_course_checks_and_totals():
     console, buffer = capture()
     print_summary(console, make_run())
     text = buffer.getvalue()
-    assert REPO in text
-    assert COMMIT[:7] in text
+    assert str(COURSE) in text
     assert "links" in text and "2" in text
     assert "ValueError: boom" in text
     assert "1 error" in text and "1 warning" in text
 
 
 @pytest.mark.parametrize(
-    ("downloaded", "stale", "expected"),
+    ("line", "expected"),
     [
-        (True, False, "downloaded"),
-        (False, False, "cached"),
-        (False, True, "out of date"),
+        (3, "vscode://file/C:/courses/CS212/docs/A.md:3"),
+        (None, "vscode://file/C:/courses/CS212/docs/A.md"),
     ],
-    ids=["downloaded", "cached", "stale"],
+    ids=["with-line", "whole-file"],
 )
-def test_summary_says_where_the_files_came_from(downloaded, stale, expected):
-    console, buffer = capture()
-    print_summary(console, make_run(downloaded, stale))
-    assert expected in buffer.getvalue()
+def test_editor_url_opens_vscode_at_the_line(line, expected):
+    assert editor_url(COURSE / "docs" / "A.md", line) == expected
 
 
-def test_summary_links_the_commit_on_github():
-    console, buffer = capture(terminal=True)
-    print_summary(console, make_run())
-    assert "\x1b]8;" in buffer.getvalue()
-    assert f"https://github.com/{REPO}/commit/{COMMIT}" in buffer.getvalue()
+def test_editor_url_encodes_spaces_and_hashes():
+    url = editor_url(PureWindowsPath(r"C:\Lesson Plans\Week #1.md"), 2)
+    assert url == "vscode://file/C:/Lesson%20Plans/Week%20%231.md:2"
 
 
-def test_findings_list_each_finding_linked_to_its_source():
+def test_editor_url_for_a_mac_path():
+    url = editor_url(PurePosixPath("/Users/brian/CS212/docs/A.md"), 4)
+    assert url == "vscode://file/Users/brian/CS212/docs/A.md:4"
+
+
+def test_findings_list_each_finding_linked_to_the_editor():
     console, buffer = capture(terminal=True)
     run = make_run()
     print_findings(console, run)
@@ -98,7 +95,7 @@ def test_findings_list_each_finding_linked_to_its_source():
     for finding in FINDINGS:
         assert finding.path in text
         assert finding.message in text
-        assert run.source_url(finding) in text
+        assert editor_url(run.file_of(finding), finding.line) in text
 
 
 def test_events_print_progress_and_errors():

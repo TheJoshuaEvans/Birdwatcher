@@ -7,21 +7,40 @@ rich markup, so square brackets in them are printed as they are.
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
+import urllib.parse
 from itertools import groupby
 
 from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
-from birdwatcher.findings import Finding, Severity
+from birdwatcher.findings import Severity
 from birdwatcher.run import CheckStarted
 
-SHORT_COMMIT = 7  # characters of a commit SHA shown to people
 SEVERITY_STYLES = {
     Severity.ERROR: ("ERROR", "bold red"),
     Severity.WARNING: ("WARNING", "yellow"),
     Severity.INFO: ("INFO", "cyan"),
 }
+
+
+def editor_url(path, line=None):
+    """
+    A link that opens a file in VS Code, at a line when one is given.
+
+    Args:
+        path (PurePath): The file's absolute path, Windows or POSIX style.
+        line (int | None): The 1-based line, or None for the whole file.
+
+    Returns:
+        str: "vscode://file/<path with forward slashes>[:<line>]", with spaces,
+            "#" and other unsafe characters percent-encoded.
+    """
+    # VS Code wants exactly one slash after "file", for drive letters and
+    # POSIX roots alike.
+    location = urllib.parse.quote(path.as_posix().lstrip("/"), safe="/:")
+    url = f"vscode://file/{location}"
+    return url if line is None else f"{url}:{line}"
 
 
 def print_event(console, event):
@@ -49,25 +68,23 @@ def print_findings(console, run):
     Print every finding, grouped by file.
 
     Each finding shows its line, severity and message. Files and line numbers
-    link to the source on GitHub at the checked commit.
+    link to the file in VS Code (see editor_url), so the run's course folder
+    should be an absolute path.
 
     Args:
         console (rich.console.Console): Where to print.
         run (RunResult): The run.
     """
     for path, items in groupby(run.findings, key=lambda finding: finding.path):
-        whole_file = Finding(
-            check="", severity=Severity.INFO, path=path, line=None, message=""
-        )
+        file_url = editor_url(run.course_dir / path)
         console.print()
-        console.print(
-            Text(path, style=Style(bold=True, link=run.source_url(whole_file)))
-        )
+        console.print(Text(path, style=Style(bold=True, link=file_url)))
         for finding in items:
             label, style = SEVERITY_STYLES[finding.severity]
             where = f"{finding.line:>5}" if finding.line is not None else " file"
+            line_url = editor_url(run.file_of(finding), finding.line)
             line = Text("  ")
-            line.append(where, style=Style(link=run.source_url(finding)))
+            line.append(where, style=Style(link=line_url))
             line.append(f"  {label:<7}  ", style=style)
             line.append(finding.message)
             console.print(line)
@@ -76,26 +93,15 @@ def print_findings(console, run):
 
 def print_summary(console, run):
     """
-    Print the run summary: repository and commit (linked to the commit on
-    GitHub, and saying whether the copy was downloaded, cached, or possibly out
-    of date), a table of checks with their finding counts and times (or errors),
-    and totals by severity.
+    Print the run summary: the course folder, a table of checks with their
+    finding counts and times (or errors), and totals by severity.
 
     Args:
         console (rich.console.Console): Where to print.
         run (RunResult): The run.
     """
-    if run.stale:
-        source = "cached copy, may be out of date"
-    elif run.downloaded:
-        source = "downloaded"
-    else:
-        source = "cached"
     header = Text("Birdwatcher  ", style="bold")
-    header.append(f"{run.repo} @ ", style="")
-    commit_url = f"https://github.com/{run.repo}/commit/{run.commit}"
-    header.append(run.commit[:SHORT_COMMIT], style=Style(link=commit_url))
-    header.append(f" ({source})", style="yellow" if run.stale else "dim")
+    header.append(str(run.course_dir), style="")
     console.print(header)
 
     table = Table(box=None, padding=(0, 2), show_edge=False)

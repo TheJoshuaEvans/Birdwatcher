@@ -19,15 +19,12 @@ class CheckContext:
 
     Attributes:
         root: Root folder of the course repository's files.
-        repo: GitHub repository as "owner/name".
-        commit: Full SHA of the commit being checked.
-        site_url: Address of the repository's published site, ending in "/".
+        site_url: Address of the repository's published site, ending in "/",
+            or None when it is not known.
     """
 
     root: Path
-    repo: str
-    commit: str
-    site_url: str
+    site_url: str | None
 
 
 @dataclass(frozen=True)

@@ -316,6 +316,14 @@ def test_findings_are_in_file_and_line_order(tmp_path):
     ]
 
 
+def test_without_a_site_url_only_full_site_links_are_skipped(tmp_path):
+    root = write_docs(
+        tmp_path,
+        {"Page.md": f"[Full]({SITE}Page.html#nowhere)\n[Relative](#nowhere)\n"},
+    )
+    assert [finding.line for finding in check_anchors(root, None)] == [2]
+
+
 def test_no_docs_folder_means_no_findings(tmp_path):
     assert check_anchors(tmp_path, SITE) == []
 
