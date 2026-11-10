@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 import pytest
 from rich.console import Console
-from textual.widgets import DataTable, Input, OptionList, RadioButton, Static
+from textual.widgets import Checkbox, Input, OptionList, RadioButton, Static
 
 from birdwatcher.core.check import Check
 from birdwatcher.core.config import Config, load_config, save_config
@@ -23,6 +23,7 @@ from birdwatcher.core.run import CheckResult, RunResult
 from birdwatcher.ui.system import Editor
 from birdwatcher.ui.tui.app import BirdwatcherApp
 from birdwatcher.ui.tui.divider import Divider
+from birdwatcher.ui.tui.tree import FindingsTree
 
 CHECK = Check(
     id="links", title="Broken section links", description="d", run=lambda c: []
@@ -166,11 +167,40 @@ def on_setup(app):
     return bool(app.screen.query("#course-dir"))
 
 
-def table_text(app):
-    table = app.screen.query_one(DataTable)
+def leaves(app):
+    """The tree's finding rows (leaf nodes) that are showing (not inside a
+    folded branch), in display order."""
+    found = []
+
+    def walk(node):
+        for child in node.children:
+            if child.children or child.allow_expand:
+                if child.is_expanded:
+                    walk(child)
+            else:
+                found.append(child)
+
+    walk(app.screen.query_one(FindingsTree).root)
+    return found
+
+
+def finding_rows(app):
+    """Each finding row as 'branch › branch › row' text, in display order."""
+
+    def path_text(node):
+        parts = []
+        while node is not None and not node.is_root:
+            parts.append(str(node.label))
+            node = node.parent
+        return " › ".join(reversed(parts))
+
+    return [path_text(leaf) for leaf in leaves(app)]
+
+
+def branches(app):
+    """The tree's top-level branch labels."""
     return [
-        " ".join(str(cell) for cell in table.get_row_at(row))
-        for row in range(table.row_count)
+        str(node.label) for node in app.screen.query_one(FindingsTree).root.children
     ]
 
 
@@ -213,7 +243,7 @@ def test_saving_a_course_folder_remembers_it_and_checks_it(tmp_path, submit):
         assert not on_setup(app)
         assert load_config(config_path).course_dir == course
         assert checker.folders == [course]
-        assert len(table_text(app)) == 1
+        assert len(finding_rows(app)) == 1
 
     drive(app, steps)
 
@@ -487,7 +517,7 @@ def test_choosing_another_course_checks_that_one(tmp_path):
         assert checker.folders == [first, second]
         assert load_config(config_path).course_dir == second
         assert str(second) in app.sub_title
-        assert "docs/B.md" in table_text(app)[0]
+        assert "docs/B.md" in finding_rows(app)[0]
 
     drive(app, steps)
 
@@ -500,7 +530,7 @@ def test_lists_every_finding_with_severity_file_and_line(tmp_path):
     app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
 
     async def steps(app, pilot):
-        rows = table_text(app)
+        rows = finding_rows(app)
         assert len(rows) == 2
         assert "error" in rows[0].lower() and "docs/A.md" in rows[0] and "3" in rows[0]
         assert "warning" in rows[1].lower() and "docs/B.md" in rows[1]
@@ -508,16 +538,123 @@ def test_lists_every_finding_with_severity_file_and_line(tmp_path):
     drive(app, steps)
 
 
-def test_columns_are_severity_then_line_then_file(tmp_path):
+def test_a_row_shows_severity_then_line_then_message(tmp_path):
     course = make_course(tmp_path / "course")
     app, _ = make_app(tmp_path, FakeChecker([FIRST, WHOLE_FILE]), course)
 
     async def steps(app, pilot):
-        table = app.screen.query_one(DataTable)
-        labels = [str(column.label) for column in table.ordered_columns]
-        assert labels == ["Severity", "Line", "File"]
-        rows = [[str(cell) for cell in table.get_row_at(row)] for row in range(2)]
-        assert rows == [["ERROR", "3", "docs/A.md"], ["INFO", "", "docs/C.md"]]
+        labels = [str(leaf.label).split() for leaf in leaves(app)]
+        assert labels == [
+            ["ERROR", "3", "First", "problem."],
+            ["INFO", "Whole-file", "problem."],
+        ]
+
+    drive(app, steps)
+
+
+def test_findings_are_grouped_by_check_then_file_with_counts(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
+
+    async def steps(app, pilot):
+        assert [b.split() for b in branches(app)] == [
+            ["Broken", "section", "links", "2"]
+        ]
+        words = " ".join(finding_rows(app)[0].split())
+        assert words.startswith("Broken section links 2 › docs/A.md 1 ›")
+
+    drive(app, steps)
+
+
+@pytest.mark.parametrize("how", ["tab", "g"])
+def test_the_grouping_tabs_and_g_switch_the_grouping(tmp_path, how):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
+
+    async def steps(app, pilot):
+        if how == "tab":
+            await pilot.click("#by-severity")
+        else:
+            await press(app, pilot, "g")
+        await settle(app, pilot)
+        assert [b.split()[0] for b in branches(app)] == ["ERROR", "WARNING"]
+        if how == "tab":
+            await pilot.click("#by-folder")
+        else:
+            await press(app, pilot, "g")
+        await settle(app, pilot)
+        assert [b.split()[0] for b in branches(app)] == ["docs"]
+        assert "A.md" in finding_rows(app)[0]
+        if how == "g":
+            await press(app, pilot, "g")
+            assert branches(app)[0].startswith("Broken section links")
+
+    drive(app, steps)
+
+
+def test_n_and_p_move_between_findings_skipping_branches(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
+
+    async def steps(app, pilot):
+        assert FIRST.message in panel_text(app)
+        await press(app, pilot, "n")
+        assert SECOND.message in panel_text(app)
+        await press(app, pilot, "n")
+        assert SECOND.message in panel_text(app)
+        await press(app, pilot, "p")
+        assert FIRST.message in panel_text(app)
+
+    drive(app, steps)
+
+
+def test_the_cursor_stays_on_its_finding_when_the_grouping_changes(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "n")
+        assert SECOND.message in panel_text(app)
+        await press(app, pilot, "g")
+        assert SECOND.message in panel_text(app)
+
+    drive(app, steps)
+
+
+def test_the_fixed_chip_hides_and_shows_fixed_findings(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIXABLE], []), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "f")
+        chip = app.screen.query_one("#show-fixed", Checkbox)
+        assert "FIXED 1" in str(chip.label) and chip.value
+        await pilot.click("#show-fixed")
+        await settle(app, pilot)
+        assert finding_rows(app) == []
+        await pilot.click("#show-fixed")
+        await settle(app, pilot)
+        assert len(finding_rows(app)) == 1
+
+    drive(app, steps)
+
+
+@pytest.mark.parametrize("how", ["chip", "h"])
+def test_the_ignored_chip_and_h_show_ignored_findings(tmp_path, how):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([WARN]), course)
+
+    async def steps(app, pilot):
+        await ignore(app, pilot)
+        chip = app.screen.query_one("#show-ignored", Checkbox)
+        assert "IGNORED 1" in str(chip.label) and not chip.value
+        if how == "chip":
+            await pilot.click("#show-ignored")
+        else:
+            await press(app, pilot, "h")
+        await settle(app, pilot)
+        assert chip.value
+        assert "IGNORED" in finding_rows(app)[0]
 
     drive(app, steps)
 
@@ -539,7 +676,7 @@ def test_panel_follows_the_highlighted_finding(tmp_path):
 
     async def steps(app, pilot):
         assert FIRST.message in panel_text(app)
-        await pilot.press("down")
+        await pilot.press("n")
         text = panel_text(app)
         assert SECOND.message in text and FIRST.message not in text
         assert CHECK.title in text
@@ -595,7 +732,7 @@ def test_enter_or_o_opens_the_finding_in_the_editor(tmp_path, key):
     app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course, opened)
 
     async def steps(app, pilot):
-        await pilot.press("down", key)
+        await pilot.press("n", key)
         await pilot.pause()
         assert opened == [(course / "docs/B.md", 2)]
 
@@ -638,16 +775,31 @@ def test_first_click_shows_a_finding_and_second_click_opens_it(tmp_path):
     course = make_course(tmp_path / "course")
     opened = []
     app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course, opened)
-    second_row = (2, 2)  # below the header row and the first finding
 
     async def steps(app, pilot):
-        await pilot.click(DataTable, offset=second_row)
+        second = (20, leaves(app)[1].line)  # on the second finding's label
+        await pilot.click(FindingsTree, offset=second)
         await pilot.pause()
         assert opened == []
         assert SECOND.message in panel_text(app)
-        await pilot.click(DataTable, offset=second_row)
+        await pilot.click(FindingsTree, offset=second)
         await pilot.pause()
         assert opened == [(course / "docs/B.md", 2)]
+
+    drive(app, steps)
+
+
+def test_clicking_a_branch_folds_and_unfolds_it(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
+
+    async def steps(app, pilot):
+        await pilot.click(FindingsTree, offset=(4, 0))
+        await pilot.pause()
+        assert leaves(app) == []
+        await pilot.click(FindingsTree, offset=(4, 0))
+        await pilot.pause()
+        assert len(leaves(app)) == 2
 
     drive(app, steps)
 
@@ -657,14 +809,14 @@ def test_dragging_the_divider_resizes_the_findings_list(tmp_path):
     app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
 
     async def steps(app, pilot):
-        table = app.screen.query_one(DataTable)
-        before = table.size.width
+        pane = app.screen.query_one("#findings-pane")
+        before = pane.size.width
         destination = (app.screen.query_one(Divider).region.x - 12, 5)
         await pilot.mouse_down(Divider)
         await pilot.hover(None, offset=destination)
         await pilot.mouse_up(None, offset=destination)
         await pilot.pause()
-        assert table.size.width == before - 12
+        assert pane.size.width == before - 12
 
     drive(app, steps)
 
@@ -678,7 +830,7 @@ def test_r_runs_the_checks_again_and_shows_the_new_results(tmp_path):
         await pilot.press("r")
         await settle(app, pilot)
         assert checker.folders == [course, course]
-        rows = table_text(app)
+        rows = finding_rows(app)
         assert len(rows) == 1 and "docs/B.md" in rows[0]
         assert "1 finding" in app.sub_title
         assert SECOND.message in panel_text(app)
@@ -691,7 +843,7 @@ def test_no_findings_says_every_check_came_back_clean(tmp_path):
     app, _ = make_app(tmp_path, FakeChecker([]), course)
 
     async def steps(app, pilot):
-        assert app.screen.query_one(DataTable).row_count == 0
+        assert leaves(app) == []
         assert "No findings" in panel_text(app)
 
     drive(app, steps)
@@ -773,7 +925,7 @@ def test_fixing_edits_the_file_rechecks_and_keeps_the_row(tmp_path, how):
             await settle(app, pilot)
         assert line_3(course) == "the fixed line"
         assert len(checker.folders) == 2
-        rows = table_text(app)
+        rows = finding_rows(app)
         assert len(rows) == 1 and "FIXED" in rows[0]
         text = panel_text(app)
         assert "broken" in text and "fixed" in text
@@ -818,7 +970,7 @@ def test_a_fix_that_no_longer_applies_is_refused(tmp_path):
             "edited meanwhile\n"
         )
         assert fix_log(config_path, course) == []
-        assert "FIXED" not in table_text(app)[0]
+        assert "FIXED" not in finding_rows(app)[0]
 
     drive(app, steps)
 
@@ -834,7 +986,7 @@ def test_fixes_are_remembered_after_the_app_closes(tmp_path):
     second, _ = make_app(tmp_path, FakeChecker([]), course)
 
     async def steps(app, pilot):
-        rows = table_text(app)
+        rows = finding_rows(app)
         assert len(rows) == 1 and "FIXED" in rows[0]
 
     drive(second, steps)
@@ -906,7 +1058,7 @@ def test_undo_restores_the_text_and_rechecks(tmp_path, how):
         assert line_3(course) == "the broken line"
         assert len(checker.folders) == 3
         assert fix_log(config_path, course) == []
-        rows = table_text(app)
+        rows = finding_rows(app)
         assert len(rows) == 1 and "ERROR" in rows[0]
 
     drive(app, steps)
@@ -938,7 +1090,7 @@ def test_clear_forgets_the_fix_but_keeps_the_file(tmp_path, how):
         else:
             await pilot.click("#clear")
             await settle(app, pilot)
-        assert table_text(app) == []
+        assert finding_rows(app) == []
         assert line_3(course) == "the fixed line"
         assert fix_log(config_path, course) == []
 
@@ -953,10 +1105,10 @@ def test_shift_c_clears_every_fixed_finding(tmp_path):
 
     async def steps(app, pilot):
         await press(app, pilot, "f")
-        await press(app, pilot, "down", "f")
+        await press(app, pilot, "n", "f")
         assert len(fix_log(config_path, course)) == 2
         await press(app, pilot, "C")
-        assert table_text(app) == []
+        assert finding_rows(app) == []
         assert fix_log(config_path, course) == []
 
     drive(app, steps)
@@ -996,7 +1148,7 @@ def test_ignoring_takes_a_reason_and_hides_the_finding(tmp_path, finding):
         app.screen.query_one("#ignore-reason", Input).value = "on purpose"
         await press(app, pilot, "enter")
         assert not dialog_open(app)
-        assert table_text(app) == []
+        assert finding_rows(app) == []
         assert "1 ignored" in app.sub_title
         assert [i.reason for i in ignore_list(config_path, course)] == ["on purpose"]
 
@@ -1032,7 +1184,7 @@ def test_cancelling_the_dialog_keeps_the_finding(tmp_path, how):
             await pilot.click("#cancel-ignore")
             await settle(app, pilot)
         assert not dialog_open(app)
-        assert len(table_text(app)) == 1
+        assert len(finding_rows(app)) == 1
         assert ignore_list(config_path, course) == []
 
     drive(app, steps)
@@ -1048,7 +1200,7 @@ def test_the_ignore_buttons_work_like_the_keys(tmp_path):
         assert dialog_open(app)
         await pilot.click("#confirm-ignore")
         await settle(app, pilot)
-        assert table_text(app) == []
+        assert finding_rows(app) == []
         assert len(ignore_list(config_path, course)) == 1
 
     drive(app, steps)
@@ -1062,7 +1214,7 @@ def test_h_shows_ignored_findings_and_unignoring_brings_them_back(tmp_path, how)
     async def steps(app, pilot):
         await ignore(app, pilot, "kept for last term")
         await press(app, pilot, "h")
-        rows = table_text(app)
+        rows = finding_rows(app)
         assert len(rows) == 1 and "IGNORED" in rows[0]
         assert "kept for last term" in panel_text(app)
         if how == "key":
@@ -1071,7 +1223,7 @@ def test_h_shows_ignored_findings_and_unignoring_brings_them_back(tmp_path, how)
             await pilot.click("#unignore")
             await settle(app, pilot)
         assert not dialog_open(app)
-        rows = table_text(app)
+        rows = finding_rows(app)
         assert len(rows) == 1 and "WARNING" in rows[0]
         assert ignore_list(config_path, course) == []
 
@@ -1085,9 +1237,9 @@ def test_h_again_hides_ignored_findings(tmp_path):
     async def steps(app, pilot):
         await ignore(app, pilot)
         await press(app, pilot, "h")
-        assert len(table_text(app)) == 2
+        assert len(finding_rows(app)) == 2
         await press(app, pilot, "h")
-        rows = table_text(app)
+        rows = finding_rows(app)
         assert len(rows) == 1 and "INFO" in rows[0]
 
     drive(app, steps)
@@ -1104,7 +1256,7 @@ def test_ignores_are_remembered_after_the_app_closes(tmp_path):
     second, _ = make_app(tmp_path, FakeChecker([WARN]), course)
 
     async def check(app, pilot):
-        assert table_text(app) == []
+        assert finding_rows(app) == []
         assert "1 ignored" in app.sub_title
 
     drive(second, check)
@@ -1118,7 +1270,7 @@ def test_an_ignore_survives_the_finding_moving_to_another_line(tmp_path):
     async def steps(app, pilot):
         await ignore(app, pilot)
         await press(app, pilot, "r")
-        assert table_text(app) == []
+        assert finding_rows(app) == []
 
     drive(app, steps)
 

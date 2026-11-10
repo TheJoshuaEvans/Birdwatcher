@@ -1,8 +1,21 @@
 /* Styles for the Birdwatcher app (Textual CSS). */
 
-/* Findings view */
-#findings {
+/* Findings view: grouping tabs and status chips above the tree */
+#findings-pane {
     width: 45%;
+}
+
+#chips {
+    height: auto;
+}
+
+#chips Checkbox {
+    border: none;
+    padding: 0 1;
+}
+
+#findings {
+    height: 1fr;
 }
 
 #detail-scroll {

@@ -37,8 +37,11 @@ In the app, mouse and keyboard both work:
 
 | Do | To |
 |---|---|
-| Click a finding, or use the arrow keys | Show it: check, location, message, and the source lines around it |
-| Click it again, or press Enter or `o` | Open the file at that line in VS Code |
+| Click a finding, or `n` / `p` (next / previous finding) | Show it: check, location, message, and the source lines around it |
+| Click it again, or press Enter or `o` | Open the file at that line in your editor |
+| Click a branch, or the arrow keys and Enter | Fold or unfold it |
+| The **Check / Severity / Folder** tabs, or `g` | Group the findings by check, by severity, or by folder |
+| The **FIXED** and **IGNORED** chips | Show or hide fixed and ignored findings (each chip shows how many) |
 | `f`, or the **FIX** button | Apply the suggested fix to the file, then check again |
 | `e`, or **View in editor** | For a fixed finding: open the fixed line in VS Code |
 | `w`, or **View on site** | For a fixed finding: open the section the fixed link leads to, on the published site |
@@ -46,7 +49,7 @@ In the app, mouse and keyboard both work:
 | `c`, or **Clear** | Forget a fixed finding (the file keeps the fix) |
 | `C` | Forget every fixed finding of this course |
 | `i`, or **Ignore** / **Un-ignore** | Ignore a finding (with an optional reason), or bring back an ignored one |
-| `h` | Show or hide ignored findings |
+| `h` | Show or hide ignored findings (the IGNORED chip) |
 | `r` | Run the checks again, after fixing something |
 | `s` | Choose another course folder |
 | `q` | Quit |

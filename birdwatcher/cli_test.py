@@ -10,12 +10,12 @@ import sys
 
 import pytest
 from rich.console import Console
-from textual.widgets import DataTable
 
 from birdwatcher.checks import ALL_CHECKS
 from birdwatcher.cli import EXIT_FAILED, EXIT_OK, main
 from birdwatcher.core.config import Config, save_config
 from birdwatcher.ui.tui.app import BirdwatcherApp
+from birdwatcher.ui.tui.tree import FindingsTree
 
 BROKEN_PAGE = "[Jump](#nowhere)\n\n## Somewhere\n"
 
@@ -55,9 +55,11 @@ def test_no_command_opens_the_app_on_the_saved_course(tmp_path):
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            table = app.screen.query_one(DataTable)
-            assert table.row_count == 1
-            assert "docs/Page.md" in [str(cell) for cell in table.get_row_at(0)]
+            tree = app.screen.query_one(FindingsTree)
+            [check_branch] = tree.root.children
+            [file_branch] = check_branch.children
+            assert "docs/Page.md" in str(file_branch.label)
+            assert len(file_branch.children) == 1
 
     asyncio.run(drive())
 
