@@ -51,6 +51,7 @@ SETUP_INTRO = (
     f"of its folder: the one that contains {DOCS_FOLDER}/."
 )
 EMPTY_PATH = "Enter the path of the course repository's folder."
+FOLDER_PICKER_TITLE = "Choose the course repository's folder"
 
 
 def open_in_vscode(path, line):
@@ -78,6 +79,47 @@ def open_in_vscode(path, line):
     )
 
 
+def choose_folder_dialog(start):
+    """
+    Ask for a folder with the system's own folder picker (Explorer's on
+    Windows, Finder's on a Mac), shown in front of other windows. Blocks until
+    it closes.
+
+    Args:
+        start (Path | None): The folder to start in; None or a missing folder
+            starts in the picker's default place.
+
+    Returns:
+        Path | None: The chosen folder, or None when the picker was cancelled.
+
+    Raises:
+        OSError: No folder picker can be shown (for example, Python without
+            Tk, or no desktop session).
+    """
+    # Imported here so the app still runs on a Python built without Tk.
+    try:
+        import tkinter
+        from tkinter import filedialog
+    except ImportError as error:
+        raise OSError(f"Python has no Tk: {error}") from error
+    try:
+        root = tkinter.Tk()
+    except tkinter.TclError as error:
+        raise OSError(str(error)) from error
+    try:
+        # A hidden, topmost parent brings the picker in front of the terminal.
+        root.withdraw()
+        root.attributes("-topmost", True)
+        options = {"title": FOLDER_PICKER_TITLE, "mustexist": True}
+        if start is not None and Path(start).is_dir():
+            options["initialdir"] = str(start)
+        chosen = filedialog.askdirectory(parent=root, **options)
+    finally:
+        root.destroy()
+    # Cancelling returns "" (or an empty tuple on some platforms).
+    return Path(chosen) if chosen else None
+
+
 class BirdwatcherApp(App):
     """
     The Birdwatcher window.
@@ -86,7 +128,11 @@ class BirdwatcherApp(App):
     folder can no longer be used (the page then shows the saved path and the
     reason). The setup page takes the course folder's path; Enter or the Save
     button checks that the folder can be used, saves it, and checks the course.
-    An unusable folder is explained on the page and not saved. From the
+    An unusable folder is explained on the page and not saved. The Browse
+    button (or Ctrl+O) picks the folder in a folder picker instead, starting at
+    the typed path; a picked folder is filled in and saved the same way, and a
+    cancelled picker changes nothing. If no picker can be shown, the page says
+    so and typing the path still works. From the
     findings, s reopens the setup page filled in with the current folder, and
     Escape there returns without changes.
 
@@ -101,6 +147,9 @@ class BirdwatcherApp(App):
             when the findings view opens and on every re-run. May raise.
         open_in_editor (Callable[[Path, int], object]): Opens a file at a
             1-based line. Findings about a whole file open at line 1.
+        choose_folder (Callable[[Path | None], Path | None]): Shows a folder
+            picker starting at a folder; returns the choice, or None when
+            cancelled. May raise OSError when no picker can be shown.
     """
 
     TITLE = "Birdwatcher"
@@ -110,6 +159,8 @@ class BirdwatcherApp(App):
     #setup { padding: 1 2; max-width: 100; }
     #setup-title { text-style: bold; margin-bottom: 1; }
     #setup-intro { margin-bottom: 1; }
+    #setup-path { height: auto; }
+    #course-dir { width: 1fr; }
     #setup-error { color: $error; margin: 1 0; }
     """
 
@@ -119,8 +170,10 @@ class BirdwatcherApp(App):
         *,
         check: Callable[[Path], RunResult] = check_course,
         open_in_editor: Callable[[Path, int], object] = open_in_vscode,
+        choose_folder: Callable[[Path | None], Path | None] = choose_folder_dialog,
     ):
         super().__init__()
+        self._choose_folder = choose_folder
         self._config_path = Path(config_path)
         self._check = check
         self._open_in_editor = open_in_editor
@@ -131,17 +184,21 @@ class BirdwatcherApp(App):
         problem = course_problem(config.course_dir) if config else None
         if config is None or problem:
             saved = config.course_dir if config else None
-            self.push_screen(
-                SetupScreen(saved, problem, can_cancel=False), self._course_chosen
-            )
+            self.push_screen(self._setup(saved, problem, False), self._course_chosen)
         else:
             self._show_findings(config.course_dir)
 
     def action_open_setup(self):
         """Open the setup page, filled in with the current course folder."""
         current = self._findings.course_dir if self._findings else None
-        self.push_screen(
-            SetupScreen(current, None, can_cancel=True), self._course_chosen
+        self.push_screen(self._setup(current, None, True), self._course_chosen)
+
+    def _setup(self, course_dir, problem, can_cancel):
+        return SetupScreen(
+            course_dir,
+            problem,
+            can_cancel=can_cancel,
+            choose_folder=self._choose_folder,
         )
 
     def _course_chosen(self, course_dir):
@@ -169,29 +226,34 @@ class SetupScreen(Screen):
         course_dir (Path | None): The path to fill in.
         problem (str | None): Why that path cannot be used, shown at once.
         can_cancel (bool): Whether Escape closes the page without a choice.
+        choose_folder (Callable[[Path | None], Path | None]): The folder picker.
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("ctrl+o", "browse", "Browse"),
         Binding("escape", "cancel", "Back"),
         Binding("ctrl+q", "app.quit", "Quit"),
     ]
 
-    def __init__(self, course_dir, problem, *, can_cancel):
+    def __init__(self, course_dir, problem, *, can_cancel, choose_folder):
         super().__init__()
         self._course_dir = course_dir
         self._problem = problem
         self._can_cancel = can_cancel
+        self._choose_folder = choose_folder
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(id="setup"):
             yield Static("Course folder", id="setup-title")
             yield Static(SETUP_INTRO, id="setup-intro")
-            yield Input(
-                value="" if self._course_dir is None else str(self._course_dir),
-                placeholder=r"C:\path\to\CS212-CourseMaterials",
-                id="course-dir",
-            )
+            with Horizontal(id="setup-path"):
+                yield Input(
+                    value="" if self._course_dir is None else str(self._course_dir),
+                    placeholder=r"C:\path\to\CS212-CourseMaterials",
+                    id="course-dir",
+                )
+                yield Button("Browse…", id="browse")
             yield Static(self._problem or "", id="setup-error")
             with Horizontal():
                 yield Button("Save", variant="primary", id="save")
@@ -210,11 +272,32 @@ class SetupScreen(Screen):
         self._save()
 
     def on_button_pressed(self, event: Button.Pressed):
+        if event.button.id == "browse":
+            self.action_browse()
+        else:
+            self._save()
+
+    def action_browse(self):
+        text = self._typed()
+        start = Path(text).expanduser() if text else None
+        try:
+            chosen = self._choose_folder(start)
+        except OSError as error:
+            self._show_problem(
+                f"Could not open a folder picker ({error}). Type the path instead."
+            )
+            return
+        if chosen is None:
+            return
+        self.query_one("#course-dir", Input).value = str(chosen)
         self._save()
 
-    def _save(self):
+    def _typed(self):
         # Explorer's "Copy as path" adds quotes; "~" is common on a Mac.
-        text = self.query_one("#course-dir", Input).value.strip().strip('"')
+        return self.query_one("#course-dir", Input).value.strip().strip('"')
+
+    def _save(self):
+        text = self._typed()
         if not text:
             self._show_problem(EMPTY_PATH)
             return

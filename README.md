@@ -31,7 +31,7 @@ uv run birdwatcher check --course-dir C:\path\to\CS212-CourseMaterials
 uv run birdwatcher check --list-checks
 ```
 
-The first time the app opens, it asks for the folder of your local clone of the course repository (the folder that contains `docs/`) and remembers it. `birdwatcher check` uses the same folder unless `--course-dir` names another.
+The first time the app opens, it asks for the folder of your local clone of the course repository (the folder that contains `docs/`) and remembers it. Type or paste the path, or press **Browse…** (Ctrl+O) to pick it in your system's folder picker. `birdwatcher check` uses the same folder unless `--course-dir` names another.
 
 In the app, mouse and keyboard both work:
 

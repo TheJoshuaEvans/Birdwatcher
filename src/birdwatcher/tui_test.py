@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 
 import pytest
 from rich.console import Console
-from textual.widgets import Button, DataTable, Input, Static
+from textual.widgets import DataTable, Input, Static
 
 from birdwatcher.checks import Check
 from birdwatcher.config import Config, load_config, save_config
@@ -54,7 +54,22 @@ class FakeChecker:
         return RunResult(course_dir, datetime(2026, 11, 10, tzinfo=UTC), results)
 
 
-def make_app(tmp_path, checker, course=None, opened=None):
+class FakeChooser:
+    """Stands in for the folder picker: records where it started and returns
+    `outcome` (a folder, or None for cancel); an exception is raised."""
+
+    def __init__(self, outcome=None):
+        self.outcome = outcome
+        self.starts = []
+
+    def __call__(self, start):
+        self.starts.append(start)
+        if isinstance(self.outcome, Exception):
+            raise self.outcome
+        return self.outcome
+
+
+def make_app(tmp_path, checker, course=None, opened=None, chooser=None):
     """An app whose config names `course` (no config when course is None)."""
     config_path = tmp_path / "settings" / "config.json"
     if course is not None:
@@ -64,6 +79,7 @@ def make_app(tmp_path, checker, course=None, opened=None):
         config_path,
         check=checker,
         open_in_editor=lambda path, line: opened.append((path, line)),
+        choose_folder=chooser or FakeChooser(),
     )
     return app, config_path
 
@@ -118,8 +134,12 @@ async def enter_folder(app, pilot, folder, submit="enter"):
         app.screen.query_one("#course-dir", Input).focus()
         await pilot.press("enter")
     else:
-        await pilot.click(Button)
+        await pilot.click("#save")
     await settle(app, pilot)
+
+
+def typed_path(app):
+    return app.screen.query_one("#course-dir", Input).value
 
 
 # First run and setup
@@ -162,6 +182,96 @@ def test_an_unusable_folder_is_explained_and_not_saved(tmp_path):
         assert "nowhere" in setup_error(app)
         assert load_config(config_path) is None
         assert checker.folders == []
+
+    drive(app, steps)
+
+
+@pytest.mark.parametrize("how", ["click", "ctrl+o"])
+def test_browsing_to_a_course_folder_saves_and_checks_it(tmp_path, how):
+    course = make_course(tmp_path / "course")
+    checker = FakeChecker([FIRST])
+    app, config_path = make_app(tmp_path, checker, chooser=FakeChooser(course))
+
+    async def steps(app, pilot):
+        if how == "click":
+            await pilot.click("#browse")
+        else:
+            await pilot.press("ctrl+o")
+        await settle(app, pilot)
+        assert not on_setup(app)
+        assert load_config(config_path) == Config(course_dir=course)
+        assert checker.folders == [course]
+
+    drive(app, steps)
+
+
+def test_browsing_starts_at_the_typed_folder(tmp_path):
+    typed = tmp_path / "somewhere"
+    chooser = FakeChooser(None)
+    app, _ = make_app(tmp_path, FakeChecker(), chooser=chooser)
+
+    async def steps(app, pilot):
+        app.screen.query_one("#course-dir", Input).value = str(typed)
+        await pilot.click("#browse")
+        await pilot.pause()
+        assert chooser.starts == [typed]
+
+    drive(app, steps)
+
+
+def test_browsing_with_nothing_typed_starts_anywhere(tmp_path):
+    chooser = FakeChooser(None)
+    app, _ = make_app(tmp_path, FakeChecker(), chooser=chooser)
+
+    async def steps(app, pilot):
+        await pilot.click("#browse")
+        await pilot.pause()
+        assert chooser.starts == [None]
+
+    drive(app, steps)
+
+
+def test_a_cancelled_browse_changes_nothing(tmp_path):
+    checker = FakeChecker()
+    app, config_path = make_app(tmp_path, checker, chooser=FakeChooser(None))
+
+    async def steps(app, pilot):
+        app.screen.query_one("#course-dir", Input).value = "half typed"
+        await pilot.click("#browse")
+        await settle(app, pilot)
+        assert on_setup(app)
+        assert typed_path(app) == "half typed"
+        assert setup_error(app).strip() == ""
+        assert load_config(config_path) is None
+        assert checker.folders == []
+
+    drive(app, steps)
+
+
+def test_browsing_to_an_unusable_folder_fills_it_in_and_explains(tmp_path):
+    checker = FakeChecker()
+    app, config_path = make_app(tmp_path, checker, chooser=FakeChooser(tmp_path))
+
+    async def steps(app, pilot):
+        await pilot.click("#browse")
+        await settle(app, pilot)
+        assert on_setup(app)
+        assert typed_path(app) == str(tmp_path)
+        assert "docs" in setup_error(app)
+        assert load_config(config_path) is None
+
+    drive(app, steps)
+
+
+def test_no_folder_picker_is_explained_on_the_page(tmp_path):
+    chooser = FakeChooser(OSError("no desktop session"))
+    app, _ = make_app(tmp_path, FakeChecker(), chooser=chooser)
+
+    async def steps(app, pilot):
+        await pilot.click("#browse")
+        await pilot.pause()
+        assert on_setup(app)
+        assert "no desktop session" in setup_error(app)
 
     drive(app, steps)
 
