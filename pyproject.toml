@@ -8,9 +8,9 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "jinja2>=3.1.6",
     "platformdirs>=4.14.5",
     "rich>=15.0.0",
+    "textual>=8.2.8",
 ]
 
 [project.scripts]

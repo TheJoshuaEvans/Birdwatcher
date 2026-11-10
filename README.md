@@ -6,11 +6,11 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 
 ## What it does
 
-Birdwatcher downloads Brian Bird's public course repository, [lcc-cit/CS212-CourseMaterials](https://github.com/lcc-cit/CS212-CourseMaterials), runs static checks over it, and reports each problem it finds with a link to the exact file and line.
+Birdwatcher downloads Brian Bird's public course repository, [lcc-cit/CS212-CourseMaterials](https://github.com/lcc-cit/CS212-CourseMaterials), runs static checks over it, and shows each problem it finds in an interactive terminal app: open the exact file and line in an editor or on GitHub, fix it, and re-run the checks to confirm the fix.
 
 The course repository already checks that its links resolve, using [lychee](https://lychee.cli.rs/) in GitHub Actions. Birdwatcher looks for what a link checker can't see: links to sections that don't exist, files left over from renumbering, accessibility problems, and code that breaks the course's own style rules.
 
-**Status:** early development, as the CS 212 Lab 6 project. It grows into the term project: Lab 7 adds analysis by a large language model, and the term project adds simulated students. Downloading and caching work; the checks and reports below are being built.
+**Status:** early development, as the CS 212 Lab 6 project. It grows into the term project: Lab 7 adds analysis by a large language model, and the term project adds simulated students. Downloading, caching, the app and the first check work; the other checks below are being built.
 
 ## Setup
 
@@ -20,6 +20,27 @@ Requires [uv](https://docs.astral.sh/uv/), which installs Python 3.12 itself.
 uv sync
 uv run pytest
 ```
+
+## Usage
+
+```powershell
+uv run birdwatcher                    # open the app
+uv run birdwatcher check              # check once and print a summary
+uv run birdwatcher check --verbose    # ... with progress and every finding
+uv run birdwatcher check --list-checks
+```
+
+In the app, mouse and keyboard both work:
+
+| Do | To |
+|---|---|
+| Click a finding, or use the arrow keys | Show it: check, location, message, and the source lines around it |
+| Click it again, or press Enter or `o` | Open the file at that line in VS Code |
+| `g` | Open the line on GitHub, at the checked commit |
+| `r` | Run the checks again |
+| `q` | Quit |
+
+Opening files in VS Code needs its `code` command on the PATH. The Windows installer adds it; on a Mac, run VS Code's command **Shell Command: Install 'code' command in PATH** once.
 
 ## How it works
 
@@ -31,16 +52,11 @@ Each run asks GitHub for the latest commit on the course repository's `main` bra
 - Every path in the archive is checked before anything is extracted, so an archive cannot write outside the cache.
 - An interrupted download never leaves a partial copy that a later run would trust.
 
-### Findings and reports
+### Findings
 
-Checks produce findings as plain data: the check, the severity, the file and line, and a message. Separate renderers turn findings into output:
-
-- **Console:** colored, grouped by file, with clickable links (the default).
-- **HTML report:** a self-contained folder that opens from disk, like a test coverage report.
+Checks produce findings as plain data: the check, the severity, the file and line, and a message. The app and `birdwatcher check` are two views of the same findings, built with [Textual](https://textual.textualize.io/) and [Rich](https://rich.readthedocs.io/).
 
 Each finding links to its source line on GitHub, at the commit that was checked, so the link stays correct after the file changes.
-
-Findings also link to their place in the HTML report. Windows drops the `#section` part of `file://` links opened from a terminal or by Python's `webbrowser`, so the report includes a small redirect page per finding (`report/go/<finding>.html`) that jumps to the right section inside the browser.
 
 ## Checks
 

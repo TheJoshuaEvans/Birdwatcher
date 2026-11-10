@@ -7,7 +7,6 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 import io
 import sys
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 from rich.console import Console
@@ -15,7 +14,6 @@ from rich.console import Console
 from birdwatcher.checks import Check
 from birdwatcher.console import print_event, print_findings, print_summary
 from birdwatcher.findings import Finding, Severity
-from birdwatcher.report import stub_path
 from birdwatcher.run import CheckFinished, CheckResult, CheckStarted, RunResult
 
 REPO = "lcc-cit/CS212-CourseMaterials"
@@ -59,16 +57,15 @@ def capture(terminal=False):
     return console, buffer
 
 
-def test_summary_names_the_course_commit_checks_totals_and_report():
+def test_summary_names_the_course_commit_checks_and_totals():
     console, buffer = capture()
-    print_summary(console, make_run(), Path("birdwatcher-report") / "index.html")
+    print_summary(console, make_run())
     text = buffer.getvalue()
     assert REPO in text
     assert COMMIT[:7] in text
     assert "links" in text and "2" in text
     assert "ValueError: boom" in text
     assert "1 error" in text and "1 warning" in text
-    assert "index.html" in text
 
 
 @pytest.mark.parametrize(
@@ -82,28 +79,26 @@ def test_summary_names_the_course_commit_checks_totals_and_report():
 )
 def test_summary_says_where_the_files_came_from(downloaded, stale, expected):
     console, buffer = capture()
-    print_summary(console, make_run(downloaded, stale), Path("index.html"))
+    print_summary(console, make_run(downloaded, stale))
     assert expected in buffer.getvalue()
 
 
-def test_summary_links_the_report(tmp_path):
+def test_summary_links_the_commit_on_github():
     console, buffer = capture(terminal=True)
-    index = tmp_path / "index.html"
-    print_summary(console, make_run(), index)
+    print_summary(console, make_run())
     assert "\x1b]8;" in buffer.getvalue()
-    assert index.as_uri() in buffer.getvalue()
+    assert f"https://github.com/{REPO}/commit/{COMMIT}" in buffer.getvalue()
 
 
-def test_findings_list_each_finding_with_both_links(tmp_path):
+def test_findings_list_each_finding_linked_to_its_source():
     console, buffer = capture(terminal=True)
     run = make_run()
-    print_findings(console, run, tmp_path)
+    print_findings(console, run)
     text = buffer.getvalue()
     for finding in FINDINGS:
         assert finding.path in text
         assert finding.message in text
         assert run.source_url(finding) in text
-        assert stub_path(tmp_path, finding).as_uri() in text
 
 
 def test_events_print_progress_and_errors():

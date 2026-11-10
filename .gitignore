@@ -8,6 +8,3 @@ wheels/
 
 # Virtual environments
 .venv
-
-# Birdwatcher's own report output
-birdwatcher-report/
