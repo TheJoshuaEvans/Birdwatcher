@@ -62,7 +62,7 @@ class FindingsScreen(Screen):
         yield Footer()
 
     def on_mount(self):
-        self.query_one(DataTable).add_columns("Severity", "File", "Line")
+        self.query_one(DataTable).add_columns("Severity", "Line", "File")
         self._start_checking()
 
     def change_course(self, course_dir):
@@ -98,7 +98,9 @@ class FindingsScreen(Screen):
         for finding in run.findings:
             label, style = SEVERITY_STYLES[finding.severity]
             line = "" if finding.line is None else str(finding.line)
-            table.add_row(Text(label, style=style), finding.path, line)
+            table.add_row(
+                Text(label, style=style), Text(line, justify="right"), finding.path
+            )
 
         count = len(run.findings)
         noun = "finding" if count == 1 else "findings"

@@ -360,6 +360,20 @@ def test_lists_every_finding_with_severity_file_and_line(tmp_path):
     drive(app, steps)
 
 
+def test_columns_are_severity_then_line_then_file(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, WHOLE_FILE]), course)
+
+    async def steps(app, pilot):
+        table = app.screen.query_one(DataTable)
+        labels = [str(column.label) for column in table.ordered_columns]
+        assert labels == ["Severity", "Line", "File"]
+        rows = [[str(cell) for cell in table.get_row_at(row)] for row in range(2)]
+        assert rows == [["ERROR", "3", "docs/A.md"], ["INFO", "", "docs/C.md"]]
+
+    drive(app, steps)
+
+
 def test_subtitle_names_the_course_folder_and_count(tmp_path):
     course = make_course(tmp_path / "course")
     app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
