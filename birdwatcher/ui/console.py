@@ -7,40 +7,16 @@ rich markup, so square brackets in them are printed as they are.
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
-import urllib.parse
 from itertools import groupby
 
 from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
-from birdwatcher.findings import Severity
-from birdwatcher.run import CheckStarted
-
-SEVERITY_STYLES = {
-    Severity.ERROR: ("ERROR", "bold red"),
-    Severity.WARNING: ("WARNING", "yellow"),
-    Severity.INFO: ("INFO", "cyan"),
-}
-
-
-def editor_url(path, line=None):
-    """
-    A link that opens a file in VS Code, at a line when one is given.
-
-    Args:
-        path (PurePath): The file's absolute path, Windows or POSIX style.
-        line (int | None): The 1-based line, or None for the whole file.
-
-    Returns:
-        str: "vscode://file/<path with forward slashes>[:<line>]", with spaces,
-            "#" and other unsafe characters percent-encoded.
-    """
-    # VS Code wants exactly one slash after "file", for drive letters and
-    # POSIX roots alike.
-    location = urllib.parse.quote(path.as_posix().lstrip("/"), safe="/:")
-    url = f"vscode://file/{location}"
-    return url if line is None else f"{url}:{line}"
+from birdwatcher.core.findings import Severity
+from birdwatcher.core.run import CheckStarted
+from birdwatcher.ui.severity import SEVERITY_STYLES
+from birdwatcher.ui.system import editor_url
 
 
 def print_event(console, event):

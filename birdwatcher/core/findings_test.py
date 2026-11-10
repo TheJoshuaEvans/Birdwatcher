@@ -1,5 +1,5 @@
 """
-Contract tests for birdwatcher.findings.
+Contract tests for birdwatcher.core.findings.
 
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
@@ -12,7 +12,7 @@ from dataclasses import replace
 
 import pytest
 
-from birdwatcher.findings import Finding, Severity
+from birdwatcher.core.findings import Finding, Severity
 
 BASE = Finding(
     check="broken-section-link",
@@ -34,7 +34,7 @@ def test_id_is_the_same_for_equal_findings():
 def id_in_fresh_interpreter(hash_seed):
     """Compute BASE's id in a new Python process with the given hash seed."""
     code = (
-        "from birdwatcher.findings import Finding, Severity\n"
+        "from birdwatcher.core.findings import Finding, Severity\n"
         f"print(Finding('broken-section-link', Severity.ERROR, {BASE.path!r}, "
         f"{BASE.line!r}, {BASE.message!r}).id)"
     )

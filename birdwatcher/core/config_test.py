@@ -1,5 +1,5 @@
 """
-Contract tests for birdwatcher.config.
+Contract tests for birdwatcher.core.config.
 
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
@@ -9,7 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from birdwatcher.config import Config, default_config_path, load_config, save_config
+from birdwatcher.core.config import (
+    Config,
+    default_config_path,
+    load_config,
+    save_config,
+)
 
 
 def test_saved_settings_load_back(tmp_path):

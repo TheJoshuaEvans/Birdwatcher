@@ -83,6 +83,17 @@ Checks produce findings as plain data: the check, the severity, the file and lin
 | `uv run pytest` | Runs the tests. Tests sit next to their module, named `*_test.py`. |
 | `uv run ruff check` | Lints with the course style rules (configured in `pyproject.toml`). |
 | `uv run ruff format` | Formats the code. |
+| `uv run python -m birdwatcher` | Runs Birdwatcher from the source, the same as `uv run birdwatcher`. |
+
+### Project layout
+
+| Folder | Holds |
+|---|---|
+| `birdwatcher/core/` | Findings, the check interface, running checks over a course folder, and the saved settings. No user interface code. |
+| `birdwatcher/checks/` | One module per check, and the registry of all checks. |
+| `birdwatcher/ui/` | Console output for `birdwatcher check`, desktop integrations (VS Code, the folder picker), and the Textual app in `ui/tui/`, one module per screen, styled by `birdwatcher.tcss`. |
+
+Dependencies point inward, from `ui` to `checks` to `core`, and a test enforces it. [AGENTS.md](AGENTS.md) has the full working rules: the layers, test-first development, and where new checks, screens and settings go.
 
 ## Course materials
 

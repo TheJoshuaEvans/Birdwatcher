@@ -1,0 +1,40 @@
+/* Styles for the Birdwatcher app (Textual CSS). */
+
+/* Findings view */
+#findings {
+    width: 45%;
+}
+
+#detail-scroll {
+    width: 1fr;
+    border-left: tall $accent;
+    padding: 0 1;
+}
+
+/* Setup page */
+#setup {
+    padding: 1 2;
+    max-width: 100;
+}
+
+#setup-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#setup-intro {
+    margin-bottom: 1;
+}
+
+#setup-path {
+    height: auto;
+}
+
+#course-dir {
+    width: 1fr;
+}
+
+#setup-error {
+    color: $error;
+    margin: 1 0;
+}

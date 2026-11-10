@@ -11,13 +11,8 @@ import textwrap
 
 import pytest
 
-from birdwatcher.checks.anchors import (
-    CHECK,
-    check_anchors,
-    heading_id,
-    published_site_url,
-)
-from birdwatcher.findings import Severity
+from birdwatcher.checks.anchors import CHECK, check_anchors, heading_id
+from birdwatcher.core.findings import Severity
 
 SITE = "https://lcc-cit.github.io/CS212-CourseMaterials/"
 
@@ -64,10 +59,6 @@ SITE = "https://lcc-cit.github.io/CS212-CourseMaterials/"
 )
 def test_heading_id_follows_kramdown(text, expected):
     assert heading_id(text) == expected
-
-
-def test_published_site_url():
-    assert published_site_url("lcc-cit/CS212-CourseMaterials") == SITE
 
 
 def write_docs(root, pages):

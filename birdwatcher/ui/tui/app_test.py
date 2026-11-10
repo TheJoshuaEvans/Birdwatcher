@@ -1,5 +1,5 @@
 """
-Contract tests for birdwatcher.tui, driven headless through Textual's test pilot.
+Contract tests for birdwatcher.ui.tui.app, driven headless through Textual's test pilot.
 
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
@@ -13,11 +13,11 @@ import pytest
 from rich.console import Console
 from textual.widgets import DataTable, Input, Static
 
-from birdwatcher.checks import Check
-from birdwatcher.config import Config, load_config, save_config
-from birdwatcher.findings import Finding, Severity
-from birdwatcher.run import CheckResult, RunResult
-from birdwatcher.tui import BirdwatcherApp
+from birdwatcher.core.check import Check
+from birdwatcher.core.config import Config, load_config, save_config
+from birdwatcher.core.findings import Finding, Severity
+from birdwatcher.core.run import CheckResult, RunResult
+from birdwatcher.ui.tui.app import BirdwatcherApp
 
 CHECK = Check(
     id="links", title="Broken section links", description="d", run=lambda c: []

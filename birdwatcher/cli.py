@@ -1,7 +1,7 @@
 """
 Command line: open the interactive app, or check once and print a summary.
 
-    birdwatcher                 open the app (see birdwatcher.tui)
+    birdwatcher                 open the app (see birdwatcher.ui.tui.app)
     birdwatcher check           check once and print a summary, for scripts
     birdwatcher check --verbose also print progress and every finding
 
@@ -17,10 +17,10 @@ from rich.table import Table
 from rich.text import Text
 
 from birdwatcher.checks import ALL_CHECKS
-from birdwatcher.config import default_config_path, load_config
-from birdwatcher.console import print_event, print_findings, print_summary
-from birdwatcher.course import check_course, course_problem
-from birdwatcher.tui import BirdwatcherApp
+from birdwatcher.core.config import default_config_path, load_config
+from birdwatcher.core.course import check_course, course_problem
+from birdwatcher.ui.console import print_event, print_findings, print_summary
+from birdwatcher.ui.tui.app import BirdwatcherApp
 
 EXIT_OK = 0
 EXIT_FAILED = 2  # no usable course folder (argparse also uses 2 for bad usage)

@@ -1,5 +1,5 @@
 """
-Contract tests for birdwatcher.run.
+Contract tests for birdwatcher.core.run.
 
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from birdwatcher.checks import Check
-from birdwatcher.findings import Finding, Severity
-from birdwatcher.run import CheckFinished, CheckStarted, RunResult, run_checks
+from birdwatcher.core.check import Check
+from birdwatcher.core.findings import Finding, Severity
+from birdwatcher.core.run import CheckFinished, CheckStarted, RunResult, run_checks
 
 COURSE = Path("course")
 SITE = "https://lcc-cit.github.io/CS212-CourseMaterials/"

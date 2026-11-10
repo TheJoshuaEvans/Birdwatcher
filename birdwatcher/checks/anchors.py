@@ -15,10 +15,10 @@ import urllib.parse
 from collections import Counter
 from pathlib import Path
 
-from birdwatcher.findings import Finding, Severity
+from birdwatcher.core.course import DOCS_FOLDER
+from birdwatcher.core.findings import Finding, Severity
 
 CHECK = "broken-section-link"
-DOCS_FOLDER = "docs"
 ALWAYS_PRESENT = frozenset({"", "top"})  # browsers scroll to the top for these
 SUGGESTION_CUTOFF = 0.6  # difflib similarity needed to suggest an existing id
 
@@ -71,20 +71,6 @@ def heading_id(text):
     return re.sub(r"[ \t]", "-", text)
 
 
-def published_site_url(repo):
-    """
-    Return the GitHub Pages address of a repository's published site.
-
-    Args:
-        repo (str): GitHub repository as "owner/name".
-
-    Returns:
-        str: "https://owner.github.io/name/", with the trailing slash.
-    """
-    owner, name = repo.split("/")
-    return f"https://{owner.lower()}.github.io/{name}/"
-
-
 def check_anchors(repo_root, site_url):
     """
     Find links in the site's Markdown pages whose #section does not exist.
@@ -103,7 +89,7 @@ def check_anchors(repo_root, site_url):
     Args:
         repo_root (Path): Root folder of the course repository.
         site_url (str | None): Published site address, as from
-            published_site_url, or None when it is not known.
+            core.course.published_site_url, or None when it is not known.
 
     Returns:
         list[Finding]: One error per broken link, at the link's line, naming the

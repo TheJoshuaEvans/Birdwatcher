@@ -7,9 +7,7 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 import re
 from pathlib import Path
 
-from birdwatcher.checks import ALL_CHECKS
-from birdwatcher.checks.anchors import published_site_url
-from birdwatcher.run import run_checks
+from birdwatcher.core.run import run_checks
 
 DOCS_FOLDER = "docs"  # the published site's sources; every check reads from here
 ORIGIN_SECTION = '[remote "origin"]'
@@ -86,17 +84,31 @@ def _git_dir(course_dir):
     return dot_git
 
 
-def check_course(course_dir, checks=ALL_CHECKS, on_event=None):
+def published_site_url(repo):
+    """
+    Return the GitHub Pages address of a repository's published site.
+
+    Args:
+        repo (str): GitHub repository as "owner/name".
+
+    Returns:
+        str: "https://owner.github.io/name/", with the trailing slash.
+    """
+    owner, name = repo.split("/")
+    return f"https://{owner.lower()}.github.io/{name}/"
+
+
+def check_course(course_dir, checks, on_event=None):
     """
     Run checks over a local clone of the course.
 
-    Full links to the course's own published site (on GitHub Pages) are
-    checked like relative links when the clone's origin is on GitHub, and
-    ignored otherwise.
+    Each check's context carries the course's published site address when the
+    clone's origin is on GitHub (see published_site_url), and None otherwise.
 
     Args:
         course_dir (Path): The clone's root folder.
-        checks (Sequence[Check]): The checks to run, in order.
+        checks (Sequence[Check]): The checks to run, in order (usually
+            checks.ALL_CHECKS).
         on_event (Callable[[CheckStarted | CheckFinished], object] | None):
             Receives progress events.
 

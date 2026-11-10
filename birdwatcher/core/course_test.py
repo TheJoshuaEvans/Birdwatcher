@@ -1,5 +1,5 @@
 """
-Contract tests for birdwatcher.course.
+Contract tests for birdwatcher.core.course.
 
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
@@ -8,7 +8,14 @@ import sys
 
 import pytest
 
-from birdwatcher.course import check_course, course_problem, github_repo
+from birdwatcher.core.check import Check
+from birdwatcher.core.course import (
+    check_course,
+    course_problem,
+    github_repo,
+    published_site_url,
+)
+from birdwatcher.core.findings import Finding, Severity
 
 SITE = "https://lcc-cit.github.io/CS212-CourseMaterials/"
 
@@ -94,22 +101,42 @@ def test_github_repo_is_none_without_an_origin(tmp_path):
     assert github_repo(tmp_path) is None
 
 
-def test_check_course_reports_broken_section_links(tmp_path):
-    course = make_course(tmp_path, "[Jump](#nowhere)\n")
-    run = check_course(course)
+def test_published_site_url():
+    assert published_site_url("lcc-cit/CS212-CourseMaterials") == SITE
+
+
+def recording_check(seen):
+    """A check that records the context it is given and finds one problem."""
+
+    def run(context):
+        seen.append(context)
+        return [Finding("rec", Severity.INFO, "docs/Page.md", 1, "seen")]
+
+    return Check(id="rec", title="Recorder", description="d", run=run)
+
+
+def test_check_course_runs_the_checks_over_the_folder(tmp_path):
+    course = make_course(tmp_path)
+    seen = []
+    run = check_course(course, [recording_check(seen)])
     assert run.course_dir == course
-    assert [finding.line for finding in run.findings] == [1]
+    assert [context.root for context in seen] == [course]
+    assert len(run.findings) == 1
 
 
-def test_full_site_links_are_checked_when_origin_is_on_github(tmp_path):
-    course = make_course(tmp_path, f"[Jump]({SITE}Page.html#nowhere)\n")
+def test_checks_get_the_site_url_when_origin_is_on_github(tmp_path):
+    course = make_course(tmp_path)
     add_remote(course, "https://github.com/lcc-cit/CS212-CourseMaterials.git")
-    assert len(check_course(course).findings) == 1
+    seen = []
+    check_course(course, [recording_check(seen)])
+    assert seen[0].site_url == SITE
 
 
-def test_full_site_links_are_ignored_without_a_github_origin(tmp_path):
-    course = make_course(tmp_path, f"[Jump]({SITE}Page.html#nowhere)\n")
-    assert check_course(course).findings == []
+def test_checks_get_no_site_url_without_a_github_origin(tmp_path):
+    course = make_course(tmp_path)
+    seen = []
+    check_course(course, [recording_check(seen)])
+    assert seen[0].site_url is None
 
 
 if __name__ == "__main__":

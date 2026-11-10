@@ -14,8 +14,8 @@ from textual.widgets import DataTable
 
 from birdwatcher.checks import ALL_CHECKS
 from birdwatcher.cli import EXIT_FAILED, EXIT_OK, main
-from birdwatcher.config import Config, save_config
-from birdwatcher.tui import BirdwatcherApp
+from birdwatcher.core.config import Config, save_config
+from birdwatcher.ui.tui.app import BirdwatcherApp
 
 BROKEN_PAGE = "[Jump](#nowhere)\n\n## Somewhere\n"
 

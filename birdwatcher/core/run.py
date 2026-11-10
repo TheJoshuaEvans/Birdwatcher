@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from birdwatcher.checks import Check, CheckContext
-from birdwatcher.findings import Finding
+from birdwatcher.core.check import Check, CheckContext
+from birdwatcher.core.findings import Finding
 
 
 @dataclass(frozen=True)

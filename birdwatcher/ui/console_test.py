@@ -1,5 +1,5 @@
 """
-Contract tests for birdwatcher.console.
+Contract tests for birdwatcher.ui.console.
 
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
@@ -7,15 +7,16 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 import io
 import sys
 from datetime import UTC, datetime
-from pathlib import PurePosixPath, PureWindowsPath
+from pathlib import PureWindowsPath
 
 import pytest
 from rich.console import Console
 
-from birdwatcher.checks import Check
-from birdwatcher.console import editor_url, print_event, print_findings, print_summary
-from birdwatcher.findings import Finding, Severity
-from birdwatcher.run import CheckFinished, CheckResult, CheckStarted, RunResult
+from birdwatcher.core.check import Check
+from birdwatcher.core.findings import Finding, Severity
+from birdwatcher.core.run import CheckFinished, CheckResult, CheckStarted, RunResult
+from birdwatcher.ui.console import print_event, print_findings, print_summary
+from birdwatcher.ui.system import editor_url
 
 COURSE = PureWindowsPath(r"C:\courses\CS212")  # behaves the same on every OS
 CHECK = Check(
@@ -63,28 +64,6 @@ def test_summary_names_the_course_checks_and_totals():
     assert "links" in text and "2" in text
     assert "ValueError: boom" in text
     assert "1 error" in text and "1 warning" in text
-
-
-@pytest.mark.parametrize(
-    ("line", "expected"),
-    [
-        (3, "vscode://file/C:/courses/CS212/docs/A.md:3"),
-        (None, "vscode://file/C:/courses/CS212/docs/A.md"),
-    ],
-    ids=["with-line", "whole-file"],
-)
-def test_editor_url_opens_vscode_at_the_line(line, expected):
-    assert editor_url(COURSE / "docs" / "A.md", line) == expected
-
-
-def test_editor_url_encodes_spaces_and_hashes():
-    url = editor_url(PureWindowsPath(r"C:\Lesson Plans\Week #1.md"), 2)
-    assert url == "vscode://file/C:/Lesson%20Plans/Week%20%231.md:2"
-
-
-def test_editor_url_for_a_mac_path():
-    url = editor_url(PurePosixPath("/Users/brian/CS212/docs/A.md"), 4)
-    assert url == "vscode://file/Users/brian/CS212/docs/A.md:4"
 
 
 def test_findings_list_each_finding_linked_to_the_editor():

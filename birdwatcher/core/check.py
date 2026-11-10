@@ -1,7 +1,5 @@
 """
-Checks: each inspects a course repository and returns findings.
-
-ALL_CHECKS lists every check Birdwatcher runs, in report order.
+The interface every check implements.
 
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
@@ -9,8 +7,6 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-
-from birdwatcher.checks import anchors
 
 
 @dataclass(frozen=True)
@@ -42,17 +38,3 @@ class Check:
     title: str
     description: str
     run: Callable[[CheckContext], list]
-
-
-ALL_CHECKS = (
-    Check(
-        id=anchors.CHECK,
-        title="Broken section links",
-        description=(
-            "Links to a #section that does not exist on the target page. Readers who "
-            "click them land at the top of the page instead of the section. The "
-            "site's link checker does not look at the part after '#'."
-        ),
-        run=lambda context: anchors.check_anchors(context.root, context.site_url),
-    ),
-)

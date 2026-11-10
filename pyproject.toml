@@ -20,6 +20,10 @@ birdwatcher = "birdwatcher:main"
 requires = ["uv_build>=0.12.22,<0.13.0"]
 build-backend = "uv_build"
 
+[tool.uv.build-backend]
+# Flat layout: the package is ./birdwatcher, not ./src/birdwatcher
+module-root = ""
+
 [dependency-groups]
 dev = [
     "pytest>=9.2.0",
@@ -43,5 +47,5 @@ extend-select = [
 "*_test.py" = ["PLR2004"]
 
 [tool.pytest.ini_options]
-testpaths = ["src"]
+testpaths = ["birdwatcher"]
 python_files = ["*_test.py"]
