@@ -16,9 +16,11 @@ from collections import Counter
 from pathlib import Path
 
 from birdwatcher.core.course import DOCS_FOLDER
-from birdwatcher.core.findings import Finding, Severity
+from birdwatcher.core.findings import Destination, Finding, Fix, Severity
 
 CHECK = "broken-section-link"
+# Pages a folder's own address shows (GitHub Pages serves README.md as the index)
+FOLDER_INDEX_NAMES = frozenset({"index.md", "index.html", "readme.md"})
 ALWAYS_PRESENT = frozenset({"", "top"})  # browsers scroll to the top for these
 SUGGESTION_CUTOFF = 0.6  # difflib similarity needed to suggest an existing id
 
@@ -94,7 +96,11 @@ def check_anchors(repo_root, site_url):
     Returns:
         list[Finding]: One error per broken link, at the link's line, naming the
             closest existing id when there is a close one; in file and line
-            order. Empty when the repository has no docs/ folder.
+            order. Empty when the repository has no docs/ folder. A finding
+            with a close id carries a Fix that replaces the link's target with
+            the same target ending in that id; its destination is the page,
+            the line of the section's heading, and (when site_url is given)
+            the section's published address.
     """
     repo_root = Path(repo_root).resolve()
     docs = repo_root / DOCS_FOLDER
@@ -118,15 +124,27 @@ def check_anchors(repo_root, site_url):
             anchors = anchors_of(target_page)
             if fragment in anchors:
                 continue
+            suggestion = _suggestion(fragment, anchors)
+            fix = None
+            if suggestion is not None:
+                fix = Fix(
+                    line=line_number,
+                    before=target,
+                    after=target[: target.index("#") + 1] + suggestion,
+                    destination=Destination(
+                        path=target_page.relative_to(repo_root).as_posix(),
+                        line=anchors[suggestion],
+                        url=_published_url(target_page, docs, site_url, suggestion),
+                    ),
+                )
             findings.append(
                 Finding(
                     check=CHECK,
                     severity=Severity.ERROR,
                     path=page.relative_to(repo_root).as_posix(),
                     line=line_number,
-                    message=_message(
-                        page, target, target_page, fragment, anchors, repo_root
-                    ),
+                    message=_message(page, target, target_page, suggestion, repo_root),
+                    fix=fix,
                 )
             )
     return sorted(findings, key=lambda finding: (finding.path, finding.line))
@@ -183,24 +201,29 @@ def _links(lines):
 
 
 def _page_anchors(page):
-    """Every id a reader can jump to on a page."""
+    """Every id a reader can jump to on a page, mapped to its line (None for
+    the ids every page has)."""
+    anchors = dict.fromkeys(ALWAYS_PRESENT)
     if page.suffix.lower() != ".md":
-        return ALWAYS_PRESENT | set(ID_ATTRIBUTE.findall(_read(page)))
-    anchors = set(ALWAYS_PRESENT)
+        for number, line in enumerate(_read(page).split("\n"), start=1):
+            for anchor in ID_ATTRIBUTE.findall(line):
+                anchors.setdefault(anchor, number)
+        return anchors
     seen = Counter()
-    for line in _block_lines(page):
+    for number, line in enumerate(_block_lines(page), start=1):
         heading = ATX_HEADING.match(line)
         if heading and heading.group(1):
             text = heading.group(1)
             explicit = EXPLICIT_ID.search(text)
             if explicit:
-                anchors.add(explicit.group(1))
+                anchors.setdefault(explicit.group(1), number)
             else:
                 base = heading_id(text)
                 repeat = seen[base]
                 seen[base] += 1
-                anchors.add(base if repeat == 0 else f"{base}-{repeat}")
-        anchors.update(ID_ATTRIBUTE.findall(line))
+                anchors.setdefault(base if repeat == 0 else f"{base}-{repeat}", number)
+        for anchor in ID_ATTRIBUTE.findall(line):
+            anchors.setdefault(anchor, number)
     return anchors
 
 
@@ -247,18 +270,38 @@ def _existing_page(candidate, wants_folder):
     return next((option for option in options if option.is_file()), None)
 
 
-def _message(page, target, target_page, fragment, anchors, repo_root):
-    """Describe a broken link, suggesting the closest existing id."""
+def _suggestion(fragment, anchors):
+    """The existing id closest to a broken fragment, or None if none is close."""
+    candidates = sorted(set(anchors) - ALWAYS_PRESENT)
+    close = difflib.get_close_matches(
+        fragment, candidates, n=1, cutoff=SUGGESTION_CUTOFF
+    )
+    return close[0] if close else None
+
+
+def _published_url(page, docs, site_url, fragment):
+    """A site page's published address with a #fragment, or None without a site."""
+    if site_url is None:
+        return None
+    relative = page.relative_to(docs)
+    if relative.name.lower() in FOLDER_INDEX_NAMES:
+        parent = relative.parent.as_posix()
+        address = "" if parent == "." else f"{parent}/"
+    elif relative.suffix.lower() == ".md":
+        address = relative.with_suffix(".html").as_posix()
+    else:
+        address = relative.as_posix()
+    return f"{site_url}{urllib.parse.quote(address)}#{fragment}"
+
+
+def _message(page, target, target_page, suggestion, repo_root):
+    """Describe a broken link, with the suggested id when there is one."""
     where = (
         "on this page"
         if target_page == page
         else f"in {target_page.relative_to(repo_root).as_posix()}"
     )
     message = f"Section link '{target}' has no matching section {where}."
-    candidates = sorted(anchors - ALWAYS_PRESENT)
-    close = difflib.get_close_matches(
-        fragment, candidates, n=1, cutoff=SUGGESTION_CUTOFF
-    )
-    if close:
-        message += f" Did you mean '#{close[0]}'?"
+    if suggestion is not None:
+        message += f" Did you mean '#{suggestion}'?"
     return message

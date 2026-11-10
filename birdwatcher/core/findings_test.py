@@ -12,7 +12,7 @@ from dataclasses import replace
 
 import pytest
 
-from birdwatcher.core.findings import Finding, Severity
+from birdwatcher.core.findings import Finding, Fix, Severity
 
 BASE = Finding(
     check="broken-section-link",
@@ -67,6 +67,11 @@ def test_id_is_the_same_on_every_run():
 )
 def test_id_differs_when_any_field_differs(change):
     assert replace(BASE, **change).id != BASE.id
+
+
+def test_id_does_not_depend_on_the_fix():
+    fixed = replace(BASE, fix=Fix(line=12, before="#x", after="#y"))
+    assert fixed.id == BASE.id
 
 
 if __name__ == "__main__":

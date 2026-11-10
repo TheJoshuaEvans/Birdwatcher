@@ -7,6 +7,7 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 import asyncio
 import io
 import sys
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -15,7 +16,8 @@ from textual.widgets import DataTable, Input, Static
 
 from birdwatcher.core.check import Check
 from birdwatcher.core.config import Config, load_config, save_config
-from birdwatcher.core.findings import Finding, Severity
+from birdwatcher.core.findings import Destination, Finding, Fix, Severity
+from birdwatcher.core.fix_log import FIX_LOG_FILE, load_fixed
 from birdwatcher.core.run import CheckResult, RunResult
 from birdwatcher.ui.tui.app import BirdwatcherApp
 from birdwatcher.ui.tui.divider import Divider
@@ -70,17 +72,19 @@ class FakeChooser:
         return self.outcome
 
 
-def make_app(tmp_path, checker, course=None, opened=None, chooser=None):
+def make_app(tmp_path, checker, course=None, opened=None, chooser=None, urls=None):
     """An app whose config names `course` (no config when course is None)."""
     config_path = tmp_path / "settings" / "config.json"
     if course is not None:
         save_config(config_path, Config(course_dir=course))
     opened = [] if opened is None else opened
+    urls = [] if urls is None else urls
     app = BirdwatcherApp(
         config_path,
         check=checker,
         open_in_editor=lambda path, line: opened.append((path, line)),
         choose_folder=chooser or FakeChooser(),
+        open_url=urls.append,
     )
     return app, config_path
 
@@ -109,11 +113,13 @@ def render_text(renderable, width=120):
 
 
 def panel_text(app):
-    """The detail panel's content (message and source excerpt) as plain text."""
+    """The detail panel's visible content (message, source excerpt, fix) as
+    plain text."""
     parts = [app.screen.query_one("#detail", Static).content]
-    excerpt = app.screen.query_one("#excerpt", Static)
-    if excerpt.display:
-        parts.append(excerpt.content)
+    for selector in ("#excerpt", "#fix-summary"):
+        widget = app.screen.query_one(selector, Static)
+        if widget.display:
+            parts.append(widget.content)
     return "".join(render_text(part) for part in parts)
 
 
@@ -557,6 +563,241 @@ def test_editor_failure_does_not_close_the_app(tmp_path):
         await pilot.pause()
         assert app.is_running
         assert FIRST.message in panel_text(app)
+
+    drive(app, steps)
+
+
+# Fixing
+
+SITE_URL = "https://example.github.io/Course/B.html#beta-line"
+FIXABLE = Finding(
+    "links",
+    Severity.ERROR,
+    "docs/A.md",
+    3,
+    "Broken link.",
+    Fix(3, "broken", "fixed", Destination("docs/B.md", 2, SITE_URL)),
+)
+NO_SITE = replace(FIXABLE, fix=replace(FIXABLE.fix, destination=None))
+
+
+def line_3(course):
+    return (course / "docs" / "A.md").read_text(encoding="utf-8").split("\n")[2]
+
+
+def fix_log(config_path, course):
+    return load_fixed(config_path.with_name(FIX_LOG_FILE), course)
+
+
+def is_visible(app, selector):
+    return app.screen.query_one(selector).display
+
+
+async def press(app, pilot, *keys):
+    await pilot.press(*keys)
+    await settle(app, pilot)
+
+
+@pytest.mark.parametrize("how", ["key", "button"])
+def test_fixing_edits_the_file_rechecks_and_keeps_the_row(tmp_path, how):
+    course = make_course(tmp_path / "course")
+    checker = FakeChecker([FIXABLE], [])
+    app, config_path = make_app(tmp_path, checker, course)
+
+    async def steps(app, pilot):
+        assert is_visible(app, "#fix")
+        if how == "key":
+            await press(app, pilot, "f")
+        else:
+            await pilot.click("#fix")
+            await settle(app, pilot)
+        assert line_3(course) == "the fixed line"
+        assert len(checker.folders) == 2
+        rows = table_text(app)
+        assert len(rows) == 1 and "FIXED" in rows[0]
+        text = panel_text(app)
+        assert "broken" in text and "fixed" in text
+        assert "passes" in text
+        assert [entry.finding for entry in fix_log(config_path, course)] == [FIXABLE]
+
+    drive(app, steps)
+
+
+def test_a_fix_the_recheck_still_reports_says_so(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIXABLE]), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "f")
+        assert "still reported" in panel_text(app)
+
+    drive(app, steps)
+
+
+def test_findings_without_a_fix_offer_none(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, config_path = make_app(tmp_path, FakeChecker([FIRST]), course)
+
+    async def steps(app, pilot):
+        assert not is_visible(app, "#fix")
+        await press(app, pilot, "f")
+        assert line_3(course) == "the broken line"
+        assert fix_log(config_path, course) == []
+
+    drive(app, steps)
+
+
+def test_a_fix_that_no_longer_applies_is_refused(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, config_path = make_app(tmp_path, FakeChecker([FIXABLE]), course)
+
+    async def steps(app, pilot):
+        (course / "docs" / "A.md").write_text("edited meanwhile\n", encoding="utf-8")
+        await press(app, pilot, "f")
+        assert (course / "docs" / "A.md").read_text(encoding="utf-8") == (
+            "edited meanwhile\n"
+        )
+        assert fix_log(config_path, course) == []
+        assert "FIXED" not in table_text(app)[0]
+
+    drive(app, steps)
+
+
+def test_fixes_are_remembered_after_the_app_closes(tmp_path):
+    course = make_course(tmp_path / "course")
+    first, _ = make_app(tmp_path, FakeChecker([FIXABLE], []), course)
+
+    async def fix(app, pilot):
+        await press(app, pilot, "f")
+
+    drive(first, fix)
+    second, _ = make_app(tmp_path, FakeChecker([]), course)
+
+    async def steps(app, pilot):
+        rows = table_text(app)
+        assert len(rows) == 1 and "FIXED" in rows[0]
+
+    drive(second, steps)
+
+
+@pytest.mark.parametrize("how", ["key", "button"])
+def test_view_in_editor_opens_the_fixed_line(tmp_path, how):
+    course = make_course(tmp_path / "course")
+    opened = []
+    app, _ = make_app(tmp_path, FakeChecker([FIXABLE], []), course, opened)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "f")
+        if how == "key":
+            await press(app, pilot, "e")
+        else:
+            await pilot.click("#view-editor")
+            await pilot.pause()
+        assert opened == [(course / "docs/A.md", 3)]
+
+    drive(app, steps)
+
+
+@pytest.mark.parametrize("how", ["key", "button"])
+def test_view_on_site_opens_the_published_section(tmp_path, how):
+    course = make_course(tmp_path / "course")
+    urls = []
+    app, _ = make_app(tmp_path, FakeChecker([FIXABLE], []), course, urls=urls)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "f")
+        if how == "key":
+            await press(app, pilot, "w")
+        else:
+            await pilot.click("#view-site")
+            await pilot.pause()
+        assert urls == [SITE_URL]
+
+    drive(app, steps)
+
+
+def test_without_a_published_address_there_is_no_view_on_site(tmp_path):
+    course = make_course(tmp_path / "course")
+    opened = []
+    app, _ = make_app(tmp_path, FakeChecker([NO_SITE], []), course, opened)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "f")
+        assert not is_visible(app, "#view-site")
+        await press(app, pilot, "e")
+        assert opened == [(course / "docs/A.md", 3)]
+
+    drive(app, steps)
+
+
+@pytest.mark.parametrize("how", ["key", "button"])
+def test_undo_restores_the_text_and_rechecks(tmp_path, how):
+    course = make_course(tmp_path / "course")
+    checker = FakeChecker([FIXABLE], [], [FIXABLE])
+    app, config_path = make_app(tmp_path, checker, course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "f")
+        if how == "key":
+            await press(app, pilot, "u")
+        else:
+            await pilot.click("#undo")
+            await settle(app, pilot)
+        assert line_3(course) == "the broken line"
+        assert len(checker.folders) == 3
+        assert fix_log(config_path, course) == []
+        rows = table_text(app)
+        assert len(rows) == 1 and "ERROR" in rows[0]
+
+    drive(app, steps)
+
+
+def test_undo_refuses_when_the_line_changed_since_the_fix(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, config_path = make_app(tmp_path, FakeChecker([FIXABLE], []), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "f")
+        (course / "docs" / "A.md").write_text("one\ntwo\nrewritten\n", encoding="utf-8")
+        await press(app, pilot, "u")
+        assert line_3(course) == "rewritten"
+        assert len(fix_log(config_path, course)) == 1
+
+    drive(app, steps)
+
+
+@pytest.mark.parametrize("how", ["key", "button"])
+def test_clear_forgets_the_fix_but_keeps_the_file(tmp_path, how):
+    course = make_course(tmp_path / "course")
+    app, config_path = make_app(tmp_path, FakeChecker([FIXABLE], []), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "f")
+        if how == "key":
+            await press(app, pilot, "c")
+        else:
+            await pilot.click("#clear")
+            await settle(app, pilot)
+        assert table_text(app) == []
+        assert line_3(course) == "the fixed line"
+        assert fix_log(config_path, course) == []
+
+    drive(app, steps)
+
+
+def test_shift_c_clears_every_fixed_finding(tmp_path):
+    course = make_course(tmp_path / "course")
+    other = replace(FIXABLE, path="docs/B.md", line=2, fix=Fix(2, "beta", "gamma"))
+    checker = FakeChecker([FIXABLE, other], [other], [])
+    app, config_path = make_app(tmp_path, checker, course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "f")
+        await press(app, pilot, "down", "f")
+        assert len(fix_log(config_path, course)) == 2
+        await press(app, pilot, "C")
+        assert table_text(app) == []
+        assert fix_log(config_path, course) == []
 
     drive(app, steps)
 

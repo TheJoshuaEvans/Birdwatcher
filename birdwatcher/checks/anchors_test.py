@@ -12,7 +12,7 @@ import textwrap
 import pytest
 
 from birdwatcher.checks.anchors import CHECK, check_anchors, heading_id
-from birdwatcher.core.findings import Severity
+from birdwatcher.core.findings import Destination, Fix, Severity
 
 SITE = "https://lcc-cit.github.io/CS212-CourseMaterials/"
 
@@ -305,6 +305,78 @@ def test_findings_are_in_file_and_line_order(tmp_path):
         ("docs/B.md", 1),
         ("docs/B.md", 2),
     ]
+
+
+def only_fix(root, site_url=SITE):
+    [finding] = check_anchors(root, site_url)
+    return finding.fix
+
+
+def test_a_suggestion_comes_with_a_fix_to_the_same_page(tmp_path):
+    root = write_docs(
+        tmp_path,
+        {"Page.md": "Intro\n\nSee [rules](#goalmdashrules).\n\n## Goal Rules\n"},
+    )
+    assert only_fix(root) == Fix(
+        line=3,
+        before="#goalmdashrules",
+        after="#goal-rules",
+        destination=Destination("docs/Page.md", 5, f"{SITE}Page.html#goal-rules"),
+    )
+
+
+def test_a_fix_to_another_page_keeps_the_path(tmp_path):
+    root = write_docs(
+        tmp_path,
+        {
+            "Page.md": "[x](Lessons/Other.md#setupp)\n",
+            "Lessons/Other.md": "# Title\n\n## Setup\n",
+        },
+    )
+    assert only_fix(root) == Fix(
+        line=1,
+        before="Lessons/Other.md#setupp",
+        after="Lessons/Other.md#setup",
+        destination=Destination(
+            "docs/Lessons/Other.md", 3, f"{SITE}Lessons/Other.html#setup"
+        ),
+    )
+
+
+def test_a_fix_into_a_folder_points_at_the_folders_address(tmp_path):
+    root = write_docs(
+        tmp_path,
+        {"Page.md": "[x](Unit/#setupp)\n", "Unit/README.md": "## Setup\n"},
+    )
+    fix = only_fix(root)
+    assert fix.after == "Unit/#setup"
+    assert fix.destination == Destination(
+        "docs/Unit/README.md", 1, f"{SITE}Unit/#setup"
+    )
+
+
+def test_a_full_site_link_is_fixed_in_place(tmp_path):
+    root = write_docs(
+        tmp_path,
+        {"Page.md": f"[x]({SITE}Other.html#setupp)\n", "Other.md": "## Setup\n"},
+    )
+    fix = only_fix(root)
+    assert (fix.before, fix.after) == (
+        f"{SITE}Other.html#setupp",
+        f"{SITE}Other.html#setup",
+    )
+
+
+def test_without_a_site_url_the_fix_has_no_address(tmp_path):
+    root = write_docs(tmp_path, {"Page.md": "[x](#setupp)\n\n## Setup\n"})
+    assert only_fix(root, site_url=None).destination == Destination(
+        "docs/Page.md", 3, None
+    )
+
+
+def test_no_close_section_means_no_fix(tmp_path):
+    root = write_docs(tmp_path, {"Page.md": "[x](#zzzzzz)\n\n## Setup\n"})
+    assert only_fix(root) is None
 
 
 def test_without_a_site_url_only_full_site_links_are_skipped(tmp_path):

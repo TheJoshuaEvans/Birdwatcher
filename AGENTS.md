@@ -36,6 +36,7 @@ Tests lock in inputs, outputs and side effects, never internals. Anything the us
 ## Common changes
 
 - **A new check:** a module in `checks/` with a `CHECK` id and a function returning a list of `core.findings.Finding`; an entry in `checks.ALL_CHECKS`; a line in the README's checklist.
+- **A fixable check:** give the finding a `core.findings.Fix`, a one-line replacement (line, exact text before, text after). Only offer a fix that is right whenever it applies; anything needing judgement stays a message. A fix to a link also names its `Destination`, so the app can show where the link now leads. The app applies, records, undoes and clears fixes; checks never write files.
 - **A new screen:** a module in `ui/tui/`; its styles in `birdwatcher.tcss`; the app moves to it from `app.py`.
 - **A new setting:** a field on `core.config.Config`, read and written by `load_config` and `save_config`.
 

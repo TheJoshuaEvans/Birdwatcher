@@ -18,6 +18,20 @@
     width: auto;
 }
 
+/* The fix (or suggested fix) and its buttons, under the source lines */
+#fix-summary {
+    margin-top: 1;
+}
+
+#actions {
+    height: auto;
+    margin-top: 1;
+}
+
+#actions Button {
+    margin-right: 1;
+}
+
 /* The draggable bar between the findings list and the detail panel. The
    pointer shape shows only in terminals that support it (OSC 22). */
 Divider {

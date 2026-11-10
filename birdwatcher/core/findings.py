@@ -20,6 +20,40 @@ class Severity(StrEnum):
 
 
 @dataclass(frozen=True)
+class Destination:
+    """Where a fixed link leads, so the fix can be checked by eye.
+
+    Attributes:
+        path: The file the link now leads to, relative to the repository root,
+            with forward slashes.
+        line: 1-based line of the section it leads to, or None if unknown.
+        url: The section's address on the published site, or None when the
+            site is not known.
+    """
+
+    path: str
+    line: int | None
+    url: str | None
+
+
+@dataclass(frozen=True)
+class Fix:
+    """A one-line text replacement that resolves a finding.
+
+    Attributes:
+        line: 1-based line in the finding's file.
+        before: The exact text on that line to replace (its first occurrence).
+        after: The text to put in its place.
+        destination: Where the fixed link leads, for fixes to links; else None.
+    """
+
+    line: int
+    before: str
+    after: str
+    destination: Destination | None = None
+
+
+@dataclass(frozen=True)
 class Finding:
     """One problem found in the course materials.
 
@@ -29,6 +63,7 @@ class Finding:
         path: File it is in, relative to the repository root, with forward slashes.
         line: 1-based line number in that file, or None if it concerns the whole file.
         message: What is wrong, for a human reader.
+        fix: A replacement that resolves it, when the check knows one; else None.
     """
 
     check: str
@@ -36,6 +71,7 @@ class Finding:
     path: str
     line: int | None
     message: str
+    fix: Fix | None = None
 
     @property
     def id(self):
@@ -43,8 +79,9 @@ class Finding:
         A short identifier that is the same for the same finding on every run.
 
         Returns:
-            str: 12 lowercase hex characters, derived from all of the finding's
-                fields; findings that differ in any field get different ids.
+            str: 12 lowercase hex characters, derived from the check, severity,
+                path, line and message (not the fix); findings that differ in
+                any of those get different ids.
         """
         line = "" if self.line is None else str(self.line)
         fields = (self.check, self.severity.value, self.path, line, self.message)
