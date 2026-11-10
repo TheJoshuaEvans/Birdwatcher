@@ -1,5 +1,5 @@
 """
-How severities look in every view: a word (never colour alone) and a style.
+How severities look in every view: a word (never color alone) and a style.
 
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """

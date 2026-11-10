@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 import pytest
 from rich.console import Console
-from textual.widgets import Checkbox, Input, OptionList, RadioButton, Static
+from textual.widgets import Checkbox, Input, OptionList, RadioButton, Select, Static
 
 from birdwatcher.core.check import Check
 from birdwatcher.core.config import Config, load_config, save_config
@@ -105,8 +105,10 @@ def make_app(
     urls=None,
     shown=None,
     editors=None,
+    dark=True,
 ):
-    """An app whose config names `course` (no config when course is None)."""
+    """An app whose config names `course` (no config when course is None);
+    `dark` is what the system's light or dark mode reports."""
     config_path = tmp_path / "settings" / "config.json"
     if course is not None:
         # As the app saves it: the course is also its only recent course.
@@ -121,6 +123,7 @@ def make_app(
         choose_folder=chooser or FakeChooser(),
         open_url=urls.append,
         show_folder=shown.append,
+        prefers_dark=lambda: dark,
     )
     return app, config_path
 
@@ -875,6 +878,97 @@ def test_editor_failure_does_not_close_the_app(tmp_path):
         await pilot.pause()
         assert app.is_running
         assert FIRST.message in panel_text(app)
+
+    drive(app, steps)
+
+
+# Themes
+
+
+@pytest.mark.parametrize(
+    ("dark", "expected"),
+    [(True, "textual-dark"), (False, "textual-light"), (None, "textual-dark")],
+    ids=["dark-mode", "light-mode", "unknown"],
+)
+def test_by_default_the_theme_follows_the_system(tmp_path, dark, expected):
+    course = make_course(tmp_path / "course")
+    app, config_path = make_app(tmp_path, FakeChecker([FIRST]), course, dark=dark)
+
+    async def steps(app, pilot):
+        assert app.theme == expected
+        assert load_config(config_path).theme == "auto"
+
+    drive(app, steps)
+
+
+def test_a_chosen_theme_is_used(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, config_path = make_app(tmp_path, FakeChecker([FIRST]))
+    save_config(config_path, Config(course_dir=course, recent=(course,), theme="nord"))
+
+    async def steps(app, pilot):
+        assert app.theme == "nord"
+
+    drive(app, steps)
+
+
+def test_picking_a_theme_on_setup_previews_it_and_save_keeps_it(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, config_path = make_app(tmp_path, FakeChecker([FIRST]), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "s")
+        app.screen.query_one("#theme", Select).value = "gruvbox"
+        await pilot.pause()
+        assert app.theme == "gruvbox"
+        await pilot.click("#save")
+        await settle(app, pilot)
+        assert load_config(config_path).theme == "gruvbox"
+        assert app.theme == "gruvbox"
+
+    drive(app, steps)
+
+
+def test_escape_on_setup_puts_the_previous_theme_back(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, config_path = make_app(tmp_path, FakeChecker([FIRST]), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "s")
+        app.screen.query_one("#theme", Select).value = "gruvbox"
+        await pilot.pause()
+        await press(app, pilot, "escape")
+        assert app.theme == "textual-dark"
+        assert load_config(config_path).theme == "auto"
+
+    drive(app, steps)
+
+
+def test_choosing_match_the_system_again_follows_the_system(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, config_path = make_app(tmp_path, FakeChecker([FIRST]), dark=False)
+    save_config(config_path, Config(course_dir=course, recent=(course,), theme="nord"))
+
+    async def steps(app, pilot):
+        await press(app, pilot, "s")
+        assert app.screen.query_one("#theme", Select).value == "nord"
+        app.screen.query_one("#theme", Select).value = "auto"
+        await pilot.click("#save")
+        await settle(app, pilot)
+        assert load_config(config_path).theme == "auto"
+        assert app.theme == "textual-light"
+
+    drive(app, steps)
+
+
+def test_a_theme_changed_from_the_command_palette_is_saved(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, config_path = make_app(tmp_path, FakeChecker([FIRST]), course)
+
+    async def steps(app, pilot):
+        app.theme = "tokyo-night"  # what the palette's "Change theme" does
+        await settle(app, pilot)
+        assert load_config(config_path).theme == "tokyo-night"
 
     drive(app, steps)
 

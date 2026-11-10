@@ -16,6 +16,7 @@ from birdwatcher.ui.system import (
     VSCODE,
     desktop_editors,
     editor_url,
+    system_prefers_dark,
 )
 
 COURSE = PureWindowsPath(r"C:\courses\CS212")  # behaves the same on every OS
@@ -56,6 +57,10 @@ def test_only_vscode_opens_at_the_line():
 
 def test_the_default_app_is_always_available():
     assert desktop_editors()[DEFAULT_APP].available
+
+
+def test_the_system_mode_is_an_answer_or_unknown():
+    assert system_prefers_dark() in (True, False, None)
 
 
 if __name__ == "__main__":

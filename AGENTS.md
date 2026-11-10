@@ -44,7 +44,7 @@ Tests lock in inputs, outputs and side effects, never internals. Anything the us
 
 - Ruff, configured in `pyproject.toml`, mirrors the course's style checklist. Run `uv run ruff check` and `uv run ruff format` before committing.
 - Course text and error messages go into Rich `Text` objects, never Rich markup, so square brackets show as they are.
-- Severity is always shown as a word, never by colour alone.
+- Severity is always shown as a word, never by color alone.
 - Docstrings describe the contract in present tense. Inline comments only explain something surprising.
 
 ## Commits

@@ -124,6 +124,10 @@ Divider:hover, Divider.-dragging {
     width: auto;
 }
 
+#theme {
+    width: 48;
+}
+
 #setup-path {
     height: auto;
 }

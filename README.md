@@ -31,7 +31,7 @@ uv run birdwatcher check --course-dir C:\path\to\CS212-CourseMaterials
 uv run birdwatcher check --list-checks
 ```
 
-The first time the app opens, it asks for the folder of your local clone of the course repository (the folder that contains `docs/`) and remembers it. Type or paste the path, or press **Browse…** (Ctrl+O) to pick it in your system's folder picker. The setup page (`s`) also lists your recent course folders, so switching between courses is one click, and lets you choose the editor that opens files. `birdwatcher check` uses the same folder unless `--course-dir` names another.
+The first time the app opens, it asks for the folder of your local clone of the course repository (the folder that contains `docs/`) and remembers it. Type or paste the path, or press **Browse…** (Ctrl+O) to pick it in your system's folder picker. The setup page (`s`) also lists your recent course folders, so switching between courses is one click, and lets you choose the editor that opens files and the color theme (by default, light or dark to match your system; any theme picked with Ctrl+P is remembered too). `birdwatcher check` uses the same folder unless `--course-dir` names another.
 
 In the app, mouse and keyboard both work:
 
@@ -107,6 +107,7 @@ Checks produce findings as plain data: the check, the severity, the file and lin
 | `uv run ruff check` | Lints with the course style rules (configured in `pyproject.toml`). |
 | `uv run ruff format` | Formats the code. |
 | `uv run python -m birdwatcher` | Runs Birdwatcher from the source, the same as `uv run birdwatcher`. |
+| `$env:TEXTUAL_DEBUG = "1"; uv run birdwatcher` | Runs the app in Textual's debug mode, which reloads `birdwatcher.tcss` whenever it is saved (PowerShell; in bash, `TEXTUAL_DEBUG=1 uv run birdwatcher`). |
 
 ### Project layout
 

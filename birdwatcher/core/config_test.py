@@ -12,6 +12,7 @@ import pytest
 from birdwatcher.core.config import (
     DEFAULT_EDITOR,
     RECENT_LIMIT,
+    THEME_AUTO,
     Config,
     default_config_path,
     load_config,
@@ -104,6 +105,19 @@ def test_the_recent_list_keeps_only_the_latest(tmp_path):
 def test_choosing_a_course_keeps_the_editor(tmp_path):
     config = Config(course_dir=tmp_path, editor="typora")
     assert with_course(config, tmp_path / "other").editor == "typora"
+
+
+def test_the_theme_loads_back_and_defaults_to_auto(tmp_path):
+    path = tmp_path / "config.json"
+    assert Config(course_dir=Path("a")).theme == THEME_AUTO
+    save_config(path, Config(course_dir=Path("a"), theme="nord"))
+    assert load_config(path).theme == "nord"
+
+
+def test_older_settings_without_a_theme_match_the_system(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text('{"course_dir": "a", "theme": 3}', encoding="utf-8")
+    assert load_config(path).theme == THEME_AUTO
 
 
 def test_default_path_is_a_json_file_named_for_birdwatcher():

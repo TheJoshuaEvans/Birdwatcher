@@ -26,6 +26,7 @@ from textual.app import App
 from birdwatcher.checks import ALL_CHECKS
 from birdwatcher.core.config import (
     DEFAULT_EDITOR,
+    THEME_AUTO,
     Config,
     load_config,
     save_config,
@@ -40,7 +41,10 @@ from birdwatcher.ui.system import (
     choose_folder_dialog,
     desktop_editors,
     show_in_file_browser,
+    system_prefers_dark,
 )
+
+DARK_THEME, LIGHT_THEME = "textual-dark", "textual-light"  # for THEME_AUTO
 from birdwatcher.ui.tui.findings import FindingsScreen
 from birdwatcher.ui.tui.setup import SetupScreen
 
@@ -77,6 +81,12 @@ class BirdwatcherApp(App):
     so and typing the path still works. Every chosen folder goes to the front
     of the recent list. From the findings, s reopens the setup page filled in
     with the current folder, and Escape there returns without changes.
+
+    Theme: the setup page also lists the color themes, starting with "Match
+    the system", the default, which shows textual-light in the system's light
+    mode and textual-dark otherwise. Choosing a theme there shows it at once;
+    Save keeps it and Escape puts the previous one back. A theme chosen from
+    Textual's command palette (Ctrl+P) is saved too.
 
     The findings view's subtitle names the course folder and the number of
     findings. Checking runs in a background thread, so the window stays
@@ -127,6 +137,9 @@ class BirdwatcherApp(App):
             in the settings file's folder.
         ignore_path (Path | None): The ignore list; None means
             ignores.IGNORE_FILE in the settings file's folder.
+        prefers_dark (Callable[[], bool | None]): Whether the system is in
+            dark mode (None when unknown). Defaults to
+            system.system_prefers_dark.
     """
 
     TITLE = "Birdwatcher"
@@ -143,8 +156,11 @@ class BirdwatcherApp(App):
         show_folder: Callable[[Path], object] = show_in_file_browser,
         fix_log_path: Path | None = None,
         ignore_path: Path | None = None,
+        prefers_dark: Callable[[], bool | None] = system_prefers_dark,
     ):
         super().__init__()
+        self._prefers_dark = prefers_dark
+        self._own_theme = None  # the theme this app last set itself
         self._ignore_path = (
             Path(config_path).with_name(IGNORE_FILE)
             if ignore_path is None
@@ -167,6 +183,8 @@ class BirdwatcherApp(App):
     def on_mount(self):
         self._config = load_config(self._config_path)
         config = self._config
+        self._apply_theme(THEME_AUTO if config is None else config.theme)
+        self.theme_changed_signal.subscribe(self, self._theme_changed)
         problem = course_problem(config.course_dir) if config else None
         if config is None or problem:
             saved = config.course_dir if config else None
@@ -189,17 +207,45 @@ class BirdwatcherApp(App):
             recent=() if config is None else config.recent,
             editors=self._editors,
             editor=DEFAULT_EDITOR if config is None else config.editor,
+            themes=sorted(self.available_themes),
+            theme=THEME_AUTO if config is None else config.theme,
+            preview_theme=self._apply_theme,
         )
 
     def _course_chosen(self, choice):
         if choice is None:
+            # Cancelled: undo any theme the page was previewing.
+            self._apply_theme(
+                THEME_AUTO if self._config is None else self._config.theme
+            )
             return
         base = self._config or Config(course_dir=choice.course_dir, recent=())
         self._config = with_course(
-            replace(base, editor=choice.editor), choice.course_dir
+            replace(base, editor=choice.editor, theme=choice.theme), choice.course_dir
         )
         save_config(self._config_path, self._config)
+        self._apply_theme(choice.theme)
         self._show_findings(choice.course_dir)
+
+    def _apply_theme(self, setting):
+        """Show a theme setting: a theme's name, or THEME_AUTO for the system's
+        light or dark mode (dark when it cannot be told)."""
+        if setting in self.available_themes:
+            name = setting
+        else:
+            name = LIGHT_THEME if self._prefers_dark() is False else DARK_THEME
+        self._own_theme = name
+        self.theme = name
+
+    def _theme_changed(self, theme):
+        # The signal arrives after the change, so compare names rather than set
+        # a flag: a theme this app did not set came from the user (Ctrl+P).
+        if theme.name == self._own_theme:
+            return
+        self._own_theme = theme.name
+        if self._config is not None:
+            self._config = replace(self._config, theme=theme.name)
+            save_config(self._config_path, self._config)
 
     def _open_file(self, path, line):
         """Open a file at a line in the chosen editor (see the class docs)."""

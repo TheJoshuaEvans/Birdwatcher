@@ -16,6 +16,7 @@ from pathlib import Path
 
 EDITOR_COMMAND = "code"  # VS Code's command-line launcher
 VSCODE, TYPORA, DEFAULT_APP = "vscode", "typora", "default"  # editor ids
+COMMAND_TIMEOUT = 3  # seconds to wait for a settings query
 FOLDER_PICKER_TITLE = "Choose the course repository's folder"
 
 
@@ -181,6 +182,53 @@ def _open_with_system(path):
         os.startfile(path)
     else:
         _launch(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
+
+
+def system_prefers_dark():
+    """
+    Whether the system is set to dark mode.
+
+    Reads Windows' "apps use light theme" setting, a Mac's appearance, or
+    GNOME's color scheme. This is the system's setting, not the terminal's:
+    a terminal can use its own colors.
+
+    Returns:
+        bool | None: True for dark mode, False for light mode, None when it
+            cannot be told.
+    """
+    try:
+        if sys.platform == "win32":
+            import winreg  # Windows only, so imported here
+
+            key = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as entry:
+                light, _ = winreg.QueryValueEx(entry, "AppsUseLightTheme")
+            return light == 0
+        if sys.platform == "darwin":
+            # Prints "Dark" in dark mode; in light mode the key does not exist.
+            answer = _ask(["defaults", "read", "-g", "AppleInterfaceStyle"])
+            return answer is not None and "dark" in answer.lower()
+        answer = _ask(
+            ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"]
+        )
+        return None if answer is None else "dark" in answer.lower()
+    except OSError:
+        return None
+
+
+def _ask(command):
+    """A command's output, or None when it fails or is missing."""
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=COMMAND_TIMEOUT,
+            check=False,  # the return code is read below
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout if result.returncode == 0 else None
 
 
 def show_in_file_browser(folder):

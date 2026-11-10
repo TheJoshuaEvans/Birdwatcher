@@ -40,9 +40,9 @@ def make_run():
 def capture(terminal=False):
     """A console writing to a string; terminal=True keeps link escape codes.
 
-    Rich writes OSC 8 links only when it has a colour system and is not in legacy
+    Rich writes OSC 8 links only when it has a color system and is not in legacy
     Windows console mode (which it assumes on Windows when writing to a string),
-    so terminal mode sets both; plain mode has no colour system, so plain text.
+    so terminal mode sets both; plain mode has no color system, so plain text.
     """
     buffer = io.StringIO()
     color_system = "standard" if terminal else None

@@ -22,10 +22,12 @@ from textual.widgets import (
     OptionList,
     RadioButton,
     RadioSet,
+    Select,
     Static,
 )
 from textual.widgets.option_list import Option
 
+from birdwatcher.core.config import THEME_AUTO
 from birdwatcher.core.course import DOCS_FOLDER, course_problem
 
 SETUP_INTRO = (
@@ -34,6 +36,7 @@ SETUP_INTRO = (
 )
 EMPTY_PATH = "Enter the path of the course repository's folder."
 EDITOR_ID_PREFIX = "editor-"
+MATCH_SYSTEM = "Match the system (light or dark)"
 
 
 @dataclass(frozen=True)
@@ -44,10 +47,12 @@ class SetupChoice:
     Attributes:
         course_dir (Path): The chosen course folder (it can be used).
         editor (str): The id of the chosen editor.
+        theme (str): The chosen theme's name, or core.config.THEME_AUTO.
     """
 
     course_dir: Path
     editor: str
+    theme: str = THEME_AUTO
 
 
 class SetupScreen(Screen):
@@ -64,6 +69,11 @@ class SetupScreen(Screen):
         recent (Sequence[Path]): Recent course folders, most recent first.
         editors (Mapping[str, Editor]): The editors on offer, in order.
         editor (str): The id of the editor to select at first.
+        themes (Sequence[str]): The theme names on offer, after "Match the
+            system".
+        theme (str): The theme setting to select at first.
+        preview_theme (Callable[[str], object]): Shows a theme setting while
+            the page is open (the app puts the saved one back on cancel).
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -82,8 +92,14 @@ class SetupScreen(Screen):
         recent=(),
         editors=None,
         editor=None,
+        themes=(),
+        theme=THEME_AUTO,
+        preview_theme=None,
     ):
         super().__init__()
+        self._themes = tuple(themes)
+        self._theme = theme if theme in self._themes else THEME_AUTO
+        self._preview_theme = preview_theme or (lambda setting: None)
         self._course_dir = course_dir
         self._problem = problem
         self._can_cancel = can_cancel
@@ -125,6 +141,13 @@ class SetupScreen(Screen):
                         id=f"{EDITOR_ID_PREFIX}{editor.id}",
                         disabled=not editor.available,
                     )
+            yield Static("Color theme", classes="setup-section")
+            yield Select(
+                [(MATCH_SYSTEM, THEME_AUTO), *((name, name) for name in self._themes)],
+                value=self._theme,
+                allow_blank=False,
+                id="theme",
+            )
             yield Static(self._problem or "", id="setup-error")
             with Horizontal(id="setup-buttons"):
                 yield Button("Save", variant="primary", id="save")
@@ -147,6 +170,9 @@ class SetupScreen(Screen):
             self.action_browse()
         elif event.button.id == "save":
             self._choose(self._typed_folder())
+
+    def on_select_changed(self, event: Select.Changed):
+        self._preview_theme(event.value)
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected):
         folder = self._recent[int(event.option.id)]
@@ -184,7 +210,8 @@ class SetupScreen(Screen):
         if problem:
             self._show_problem(problem)
             return
-        self.dismiss(SetupChoice(course_dir, self._chosen_editor()))
+        theme = self.query_one("#theme", Select).value
+        self.dismiss(SetupChoice(course_dir, self._chosen_editor(), theme))
 
     def _chosen_editor(self):
         pressed = self.query_one("#editor", RadioSet).pressed_button

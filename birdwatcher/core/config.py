@@ -15,6 +15,8 @@ COURSE_DIR_KEY = "course_dir"
 EDITOR_KEY = "editor"
 RECENT_KEY = "recent"
 DEFAULT_EDITOR = "vscode"
+THEME_KEY = "theme"
+THEME_AUTO = "auto"  # follow the system's light or dark mode
 RECENT_LIMIT = 5  # course folders remembered for quick switching
 
 
@@ -29,11 +31,14 @@ class Config:
             understands, such as "vscode").
         recent (tuple[Path, ...]): Course folders used lately, most recent
             first.
+        theme (str): The color theme's name, or THEME_AUTO to follow the
+            system's light or dark mode.
     """
 
     course_dir: Path
     editor: str = DEFAULT_EDITOR
     recent: tuple[Path, ...] = ()
+    theme: str = THEME_AUTO
 
 
 def with_course(config, course_dir):
@@ -76,7 +81,8 @@ def load_config(path):
     Returns:
         Config | None: The settings, or None when the file does not exist or
             has no readable course folder (it is then treated as not set up).
-            A missing or unreadable editor is DEFAULT_EDITOR; unreadable
+            A missing or unreadable editor is DEFAULT_EDITOR, and a missing
+            or unreadable theme is THEME_AUTO; unreadable
             recent entries are left out, and a file from before the recent
             list existed (no "recent" key) gets one holding just the course
             folder.
@@ -95,10 +101,12 @@ def load_config(path):
         for entry in (listed if isinstance(listed, list) else [])
         if isinstance(entry, str)
     )
+    theme = data.get(THEME_KEY)
     return Config(
         course_dir=Path(course_dir),
         editor=editor if isinstance(editor, str) else DEFAULT_EDITOR,
         recent=recent,
+        theme=theme if isinstance(theme, str) else THEME_AUTO,
     )
 
 
@@ -117,5 +125,6 @@ def save_config(path, config):
         COURSE_DIR_KEY: str(config.course_dir),
         EDITOR_KEY: config.editor,
         RECENT_KEY: [str(folder) for folder in config.recent],
+        THEME_KEY: config.theme,
     }
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
