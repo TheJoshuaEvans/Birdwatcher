@@ -10,7 +10,7 @@ README's checklist.
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
-from birdwatcher.checks import anchors
+from birdwatcher.checks import anchors, numbering
 from birdwatcher.core.check import Check
 
 ALL_CHECKS = (
@@ -23,5 +23,16 @@ ALL_CHECKS = (
             "site's link checker does not look at the part after '#'."
         ),
         run=lambda context: anchors.check_anchors(context.root, context.site_url),
+    ),
+    Check(
+        id=numbering.CHECK,
+        title="Renumbering leftovers",
+        description=(
+            "Lab files named for a different lab or group than the folder they are "
+            "in, and lab folders that share a number. They are usually copies left "
+            "behind when labs were renumbered or reorganised, and students may "
+            "open the wrong one."
+        ),
+        run=lambda context: numbering.check_numbering(context.root),
     ),
 )

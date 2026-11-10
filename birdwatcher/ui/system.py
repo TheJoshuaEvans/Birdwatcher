@@ -1,11 +1,14 @@
 """
-Integrations with the user's desktop: VS Code and the system's folder picker.
+Integrations with the user's desktop: VS Code, the file browser and the
+system's folder picker.
 
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
+import os
 import shutil
 import subprocess
+import sys
 import urllib.parse
 from pathlib import Path
 
@@ -55,6 +58,28 @@ def open_in_vscode(path, line):
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+
+
+def show_in_file_browser(folder):
+    """
+    Show a folder in the system's file browser (Explorer on Windows, Finder on
+    a Mac, the desktop's default elsewhere), without waiting for it.
+
+    Args:
+        folder (Path): The folder.
+
+    Raises:
+        OSError: The file browser could not be started.
+    """
+    if sys.platform == "win32":
+        os.startfile(folder)
+    else:
+        opener = "open" if sys.platform == "darwin" else "xdg-open"
+        subprocess.Popen(
+            [opener, str(folder)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
 
 def choose_folder_dialog(start):

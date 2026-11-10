@@ -63,6 +63,7 @@ class FindingsScreen(Screen):
         check (Callable[[Path], RunResult]): Checks a course folder.
         open_in_editor (Callable[[Path, int], object]): Opens a file at a line.
         open_url (Callable[[str], object]): Opens an address in a browser.
+        show_folder (Callable[[Path], object]): Shows a folder in the file browser.
         fix_log_path (Path): The fix log.
     """
 
@@ -79,12 +80,15 @@ class FindingsScreen(Screen):
         Binding("q", "app.quit", "Quit"),
     ]
 
-    def __init__(self, course_dir, check, open_in_editor, open_url, fix_log_path):
+    def __init__(
+        self, course_dir, check, open_in_editor, open_url, show_folder, fix_log_path
+    ):
         super().__init__()
         self.course_dir = course_dir
         self._check = check
         self._open_in_editor = open_in_editor
         self._open_url = open_url
+        self._show_folder = show_folder
         self._fix_log_path = fix_log_path
         self._run = None
         self._fixed = []
@@ -322,7 +326,14 @@ class FindingsScreen(Screen):
     def _open(self, row):
         if row is None:
             return
-        self._edit(self.course_dir / row.finding.path, row.finding.line or 1)
+        target = self.course_dir / row.finding.path
+        if target.is_dir():
+            try:
+                self._show_folder(target)
+            except OSError as error:
+                self.notify(f"Could not show the folder: {error}", severity="error")
+            return
+        self._edit(target, row.finding.line or 1)
 
     def _edit(self, path, line):
         try:

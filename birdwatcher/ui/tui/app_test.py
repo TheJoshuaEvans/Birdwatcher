@@ -72,19 +72,23 @@ class FakeChooser:
         return self.outcome
 
 
-def make_app(tmp_path, checker, course=None, opened=None, chooser=None, urls=None):
+def make_app(
+    tmp_path, checker, course=None, opened=None, chooser=None, urls=None, shown=None
+):
     """An app whose config names `course` (no config when course is None)."""
     config_path = tmp_path / "settings" / "config.json"
     if course is not None:
         save_config(config_path, Config(course_dir=course))
     opened = [] if opened is None else opened
     urls = [] if urls is None else urls
+    shown = [] if shown is None else shown
     app = BirdwatcherApp(
         config_path,
         check=checker,
         open_in_editor=lambda path, line: opened.append((path, line)),
         choose_folder=chooser or FakeChooser(),
         open_url=urls.append,
+        show_folder=shown.append,
     )
     return app, config_path
 
@@ -469,6 +473,25 @@ def test_whole_file_findings_open_at_line_one(tmp_path):
         await pilot.press("enter")
         await pilot.pause()
         assert opened == [(course / "docs/C.md", 1)]
+
+    drive(app, steps)
+
+
+@pytest.mark.parametrize("key", ["enter", "o"])
+def test_a_finding_about_a_folder_opens_it_in_the_file_browser(tmp_path, key):
+    course = make_course(tmp_path / "course")
+    (course / "docs" / "Lab02-Old").mkdir()
+    folder_finding = Finding("labs", Severity.INFO, "docs/Lab02-Old", None, "Shared.")
+    opened, shown = [], []
+    app, _ = make_app(
+        tmp_path, FakeChecker([folder_finding]), course, opened, shown=shown
+    )
+
+    async def steps(app, pilot):
+        assert folder_finding.message in panel_text(app)
+        await press(app, pilot, key)
+        assert shown == [course / "docs/Lab02-Old"]
+        assert opened == []
 
     drive(app, steps)
 

@@ -60,8 +60,10 @@ class Finding:
     Attributes:
         check: Identifier of the check that found it, e.g. "broken-section-link".
         severity: How much it matters.
-        path: File it is in, relative to the repository root, with forward slashes.
-        line: 1-based line number in that file, or None if it concerns the whole file.
+        path: File (or, for findings about a folder, folder) it is in, relative
+            to the repository root, with forward slashes.
+        line: 1-based line number in that file, or None if it concerns the
+            whole file or a folder.
         message: What is wrong, for a human reader.
         fix: A replacement that resolves it, when the check knows one; else None.
     """

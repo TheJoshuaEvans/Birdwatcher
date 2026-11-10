@@ -27,7 +27,11 @@ from birdwatcher.core.config import Config, load_config, save_config
 from birdwatcher.core.course import check_course, course_problem
 from birdwatcher.core.fix_log import FIX_LOG_FILE
 from birdwatcher.core.run import RunResult
-from birdwatcher.ui.system import choose_folder_dialog, open_in_vscode
+from birdwatcher.ui.system import (
+    choose_folder_dialog,
+    open_in_vscode,
+    show_in_file_browser,
+)
 from birdwatcher.ui.tui.findings import FindingsScreen
 from birdwatcher.ui.tui.setup import SetupScreen
 
@@ -91,6 +95,9 @@ class BirdwatcherApp(App):
             picker starting at a folder; returns the choice, or None when
             cancelled. May raise OSError when no picker can be shown.
         open_url (Callable[[str], object]): Opens an address in a browser.
+        show_folder (Callable[[Path], object]): Shows a folder in the file
+            browser; used to open findings about folders (Enter, o or a second
+            click), which the editor cannot show.
         fix_log_path (Path | None): The fix log; None means fix_log.FIX_LOG_FILE
             in the settings file's folder.
     """
@@ -106,10 +113,12 @@ class BirdwatcherApp(App):
         open_in_editor: Callable[[Path, int], object] = open_in_vscode,
         choose_folder: Callable[[Path | None], Path | None] = choose_folder_dialog,
         open_url: Callable[[str], object] = webbrowser.open,
+        show_folder: Callable[[Path], object] = show_in_file_browser,
         fix_log_path: Path | None = None,
     ):
         super().__init__()
         self._open_url = open_url
+        self._show_folder = show_folder
         self._fix_log_path = (
             Path(config_path).with_name(FIX_LOG_FILE)
             if fix_log_path is None
@@ -156,6 +165,7 @@ class BirdwatcherApp(App):
                 self._check,
                 self._open_in_editor,
                 self._open_url,
+                self._show_folder,
                 self._fix_log_path,
             )
             self.push_screen(self._findings)
