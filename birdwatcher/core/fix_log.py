@@ -5,11 +5,10 @@ in a small JSON file, until they are cleared.
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
-import json
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 
+from birdwatcher.core.course_store import read_entries, write_entries
 from birdwatcher.core.findings import Destination, Finding, Fix, Severity
 
 FIX_LOG_FILE = "fixes.json"
@@ -44,11 +43,8 @@ def load_fixed(path, course_dir):
             is missing or unreadable, or remembers nothing for this folder;
             entries that cannot be read are left out.
     """
-    entries = _read_log(path).get(_course_key(course_dir), [])
-    if not isinstance(entries, list):
-        return []
     fixed = []
-    for entry in entries:
+    for entry in read_entries(path, course_dir):
         try:
             fixed.append(_from_json(entry))
         except (KeyError, TypeError, ValueError):
@@ -68,28 +64,7 @@ def save_fixed(path, course_dir, fixed):
         fixed (Sequence[FixedFinding]): Everything to remember for it; empty
             forgets the folder.
     """
-    path = Path(path)
-    log = _read_log(path)
-    key = _course_key(course_dir)
-    if fixed:
-        log[key] = [_to_json(entry) for entry in fixed]
-    else:
-        log.pop(key, None)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(log, indent=2) + "\n", encoding="utf-8")
-
-
-def _course_key(course_dir):
-    # resolve() makes the path absolute and, on Windows, uses the real letter case.
-    return str(Path(course_dir).resolve())
-
-
-def _read_log(path):
-    try:
-        log = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return log if isinstance(log, dict) else {}
+    write_entries(path, course_dir, [_to_json(entry) for entry in fixed])
 
 
 def _to_json(entry):

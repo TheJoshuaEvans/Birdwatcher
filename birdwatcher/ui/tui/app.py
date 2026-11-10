@@ -26,6 +26,7 @@ from birdwatcher.checks import ALL_CHECKS
 from birdwatcher.core.config import Config, load_config, save_config
 from birdwatcher.core.course import check_course, course_problem
 from birdwatcher.core.fix_log import FIX_LOG_FILE
+from birdwatcher.core.ignores import IGNORE_FILE
 from birdwatcher.core.run import RunResult
 from birdwatcher.ui.system import (
     choose_folder_dialog,
@@ -84,6 +85,15 @@ class BirdwatcherApp(App):
     every fixed finding of the course. The footer lists only the keys that
     apply to the selected row.
 
+    Ignoring: i or the Ignore button on an open finding opens a dialog that
+    names it and takes an optional reason (for an error, it also warns that
+    readers are affected); confirming hides the finding, cancelling changes
+    nothing. Ignores are remembered per course folder, across launches, and
+    match a finding by its check, file and message, so they survive line
+    changes. The subtitle counts ignored findings; h shows them in place,
+    labelled IGNORED with their reason, and i (or Un-ignore) on one brings it
+    back at once. Fixed findings cannot be ignored.
+
     Args:
         config_path (Path): The settings file to read and save.
         check (Callable[[Path], RunResult]): Checks a course folder; called
@@ -100,6 +110,8 @@ class BirdwatcherApp(App):
             click), which the editor cannot show.
         fix_log_path (Path | None): The fix log; None means fix_log.FIX_LOG_FILE
             in the settings file's folder.
+        ignore_path (Path | None): The ignore list; None means
+            ignores.IGNORE_FILE in the settings file's folder.
     """
 
     TITLE = "Birdwatcher"
@@ -115,8 +127,14 @@ class BirdwatcherApp(App):
         open_url: Callable[[str], object] = webbrowser.open,
         show_folder: Callable[[Path], object] = show_in_file_browser,
         fix_log_path: Path | None = None,
+        ignore_path: Path | None = None,
     ):
         super().__init__()
+        self._ignore_path = (
+            Path(config_path).with_name(IGNORE_FILE)
+            if ignore_path is None
+            else Path(ignore_path)
+        )
         self._open_url = open_url
         self._show_folder = show_folder
         self._fix_log_path = (
@@ -167,6 +185,7 @@ class BirdwatcherApp(App):
                 self._open_url,
                 self._show_folder,
                 self._fix_log_path,
+                self._ignore_path,
             )
             self.push_screen(self._findings)
         else:

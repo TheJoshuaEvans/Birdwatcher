@@ -18,6 +18,7 @@ from birdwatcher.core.check import Check
 from birdwatcher.core.config import Config, load_config, save_config
 from birdwatcher.core.findings import Destination, Finding, Fix, Severity
 from birdwatcher.core.fix_log import FIX_LOG_FILE, load_fixed
+from birdwatcher.core.ignores import IGNORE_FILE, load_ignores
 from birdwatcher.core.run import CheckResult, RunResult
 from birdwatcher.ui.tui.app import BirdwatcherApp
 from birdwatcher.ui.tui.divider import Divider
@@ -821,6 +822,180 @@ def test_shift_c_clears_every_fixed_finding(tmp_path):
         await press(app, pilot, "C")
         assert table_text(app) == []
         assert fix_log(config_path, course) == []
+
+    drive(app, steps)
+
+
+# Ignoring
+
+WARN = Finding("labs", Severity.WARNING, "docs/A.md", 3, "Misplaced file.")
+NOTE = Finding("labs", Severity.INFO, "docs/B.md", 2, "Shared number.")
+
+
+def ignore_list(config_path, course):
+    return load_ignores(config_path.with_name(IGNORE_FILE), course)
+
+
+def dialog_open(app):
+    return bool(app.screen.query("#ignore-reason"))
+
+
+async def ignore(app, pilot, reason=""):
+    """Press i, type a reason and press Enter."""
+    await press(app, pilot, "i")
+    app.screen.query_one("#ignore-reason", Input).value = reason
+    await press(app, pilot, "enter")
+
+
+@pytest.mark.parametrize(
+    "finding", [FIRST, WARN, NOTE], ids=["error", "warning", "info"]
+)
+def test_ignoring_takes_a_reason_and_hides_the_finding(tmp_path, finding):
+    course = make_course(tmp_path / "course")
+    app, config_path = make_app(tmp_path, FakeChecker([finding]), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "i")
+        assert dialog_open(app)
+        app.screen.query_one("#ignore-reason", Input).value = "on purpose"
+        await press(app, pilot, "enter")
+        assert not dialog_open(app)
+        assert table_text(app) == []
+        assert "1 ignored" in app.sub_title
+        assert [i.reason for i in ignore_list(config_path, course)] == ["on purpose"]
+
+    drive(app, steps)
+
+
+@pytest.mark.parametrize(
+    ("finding", "warns"),
+    [(FIRST, True), (WARN, False), (NOTE, False)],
+    ids=["error", "warning", "info"],
+)
+def test_only_errors_get_a_warning_in_the_dialog(tmp_path, finding, warns):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([finding]), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "i")
+        assert app.screen.query_one("#ignore-warning").display == warns
+
+    drive(app, steps)
+
+
+@pytest.mark.parametrize("how", ["escape", "button"])
+def test_cancelling_the_dialog_keeps_the_finding(tmp_path, how):
+    course = make_course(tmp_path / "course")
+    app, config_path = make_app(tmp_path, FakeChecker([FIRST]), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "i")
+        if how == "escape":
+            await press(app, pilot, "escape")
+        else:
+            await pilot.click("#cancel-ignore")
+            await settle(app, pilot)
+        assert not dialog_open(app)
+        assert len(table_text(app)) == 1
+        assert ignore_list(config_path, course) == []
+
+    drive(app, steps)
+
+
+def test_the_ignore_buttons_work_like_the_keys(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, config_path = make_app(tmp_path, FakeChecker([WARN]), course)
+
+    async def steps(app, pilot):
+        await pilot.click("#ignore")
+        await settle(app, pilot)
+        assert dialog_open(app)
+        await pilot.click("#confirm-ignore")
+        await settle(app, pilot)
+        assert table_text(app) == []
+        assert len(ignore_list(config_path, course)) == 1
+
+    drive(app, steps)
+
+
+@pytest.mark.parametrize("how", ["key", "button"])
+def test_h_shows_ignored_findings_and_unignoring_brings_them_back(tmp_path, how):
+    course = make_course(tmp_path / "course")
+    app, config_path = make_app(tmp_path, FakeChecker([WARN]), course)
+
+    async def steps(app, pilot):
+        await ignore(app, pilot, "kept for last term")
+        await press(app, pilot, "h")
+        rows = table_text(app)
+        assert len(rows) == 1 and "IGNORED" in rows[0]
+        assert "kept for last term" in panel_text(app)
+        if how == "key":
+            await press(app, pilot, "i")
+        else:
+            await pilot.click("#unignore")
+            await settle(app, pilot)
+        assert not dialog_open(app)
+        rows = table_text(app)
+        assert len(rows) == 1 and "WARNING" in rows[0]
+        assert ignore_list(config_path, course) == []
+
+    drive(app, steps)
+
+
+def test_h_again_hides_ignored_findings(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([WARN, NOTE]), course)
+
+    async def steps(app, pilot):
+        await ignore(app, pilot)
+        await press(app, pilot, "h")
+        assert len(table_text(app)) == 2
+        await press(app, pilot, "h")
+        rows = table_text(app)
+        assert len(rows) == 1 and "INFO" in rows[0]
+
+    drive(app, steps)
+
+
+def test_ignores_are_remembered_after_the_app_closes(tmp_path):
+    course = make_course(tmp_path / "course")
+    first, _ = make_app(tmp_path, FakeChecker([WARN]), course)
+
+    async def steps(app, pilot):
+        await ignore(app, pilot)
+
+    drive(first, steps)
+    second, _ = make_app(tmp_path, FakeChecker([WARN]), course)
+
+    async def check(app, pilot):
+        assert table_text(app) == []
+        assert "1 ignored" in app.sub_title
+
+    drive(second, check)
+
+
+def test_an_ignore_survives_the_finding_moving_to_another_line(tmp_path):
+    course = make_course(tmp_path / "course")
+    moved = replace(WARN, line=7)
+    app, _ = make_app(tmp_path, FakeChecker([WARN], [moved]), course)
+
+    async def steps(app, pilot):
+        await ignore(app, pilot)
+        await press(app, pilot, "r")
+        assert table_text(app) == []
+
+    drive(app, steps)
+
+
+def test_fixed_findings_cannot_be_ignored(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIXABLE], []), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "f")
+        await press(app, pilot, "i")
+        assert not dialog_open(app)
+        assert not is_visible(app, "#ignore")
 
     drive(app, steps)
 

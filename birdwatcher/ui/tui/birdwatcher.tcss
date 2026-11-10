@@ -32,6 +32,43 @@
     margin-right: 1;
 }
 
+/* The ignore dialog, centred over the findings */
+IgnoreDialog {
+    align: center middle;
+}
+
+#ignore-dialog {
+    width: 72;
+    height: auto;
+    padding: 1 2;
+    border: thick $accent;
+    background: $surface;
+}
+
+#ignore-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#ignore-warning {
+    color: $warning;
+    text-style: bold;
+    margin-top: 1;
+}
+
+#ignore-reason-label {
+    margin-top: 1;
+}
+
+#ignore-buttons {
+    height: auto;
+    margin-top: 1;
+}
+
+#ignore-buttons Button {
+    margin-right: 1;
+}
+
 /* The draggable bar between the findings list and the detail panel. The
    pointer shape shows only in terminals that support it (OSC 22). */
 Divider {

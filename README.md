@@ -45,6 +45,8 @@ In the app, mouse and keyboard both work:
 | `u`, or **Undo** | Put the original text back, then check again |
 | `c`, or **Clear** | Forget a fixed finding (the file keeps the fix) |
 | `C` | Forget every fixed finding of this course |
+| `i`, or **Ignore** / **Un-ignore** | Ignore a finding (with an optional reason), or bring back an ignored one |
+| `h` | Show or hide ignored findings |
 | `r` | Run the checks again, after fixing something |
 | `s` | Choose another course folder |
 | `q` | Quit |
@@ -52,6 +54,10 @@ In the app, mouse and keyboard both work:
 ### Fixing
 
 When a check knows the fix, the finding's panel shows it as a before and after, with a **FIX** button. Fixing edits that one line and nothing else, then checks again. Fixed findings stay in the list, marked FIXED, with the change and whether the re-check still reports the problem, so you can confirm each fix with **View in editor** or **View on site** and undo it if it is wrong. Birdwatcher remembers fixed findings per course folder, in `fixes.json` next to its settings, until you clear them. Birdwatcher never commits; `git diff` shows every change it made.
+
+### Ignoring
+
+Any finding can be ignored, with an optional reason ("kept for last term's students"); ignoring an error asks for confirmation first, because readers are affected. Ignored findings leave the list, and the subtitle counts them; `h` shows them again, with their reasons, and `i` brings one back. Ignores are remembered per course folder in `ignored.json` next to the settings. An ignore matches a finding by its check, file and message rather than its line, so it still applies after lines are added or removed above it.
 
 Opening files in VS Code needs its `code` command on the PATH. The Windows installer adds it; on a Mac, run VS Code's command **Shell Command: Install 'code' command in PATH** once.
 

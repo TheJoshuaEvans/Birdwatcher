@@ -1,6 +1,6 @@
 """
 The findings view: every finding in a table, the highlighted one in detail,
-with fixing, undoing and clearing of fixes.
+with fixing (and undoing and clearing fixes) and ignoring.
 
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
@@ -21,13 +21,21 @@ from textual.widgets import Button, DataTable, Footer, Header, Static
 from birdwatcher.core.findings import Finding
 from birdwatcher.core.fix_log import FixedFinding, load_fixed, save_fixed
 from birdwatcher.core.fixes import FixError, apply_fix, undo_fix
+from birdwatcher.core.ignores import (
+    Ignore,
+    ignore_finding,
+    load_ignores,
+    save_ignores,
+)
 from birdwatcher.ui.severity import SEVERITY_STYLES
 from birdwatcher.ui.tui.divider import Divider
+from birdwatcher.ui.tui.ignore import IgnoreDialog
 
 CONTEXT_LINES = 6  # source lines shown above and below a finding
 MIN_PANE_WIDTH = 20  # columns each side keeps when the divider is dragged
 NO_FINDINGS = "No findings. Every check came back clean."
 FIXED_LABEL = ("FIXED", "bold green")
+IGNORED_LABEL = ("IGNORED", "dim")
 # Each action button and the screen action it runs
 BUTTON_ACTIONS = {
     "fix": "fix",
@@ -35,6 +43,8 @@ BUTTON_ACTIONS = {
     "view-site": "view_site",
     "undo": "undo",
     "clear": "clear",
+    "ignore": "ignore",
+    "unignore": "ignore",
 }
 
 
@@ -46,11 +56,28 @@ class Row:
     Attributes:
         finding (Finding): The finding.
         fixed (FixedFinding | None): Its fix log entry when it was fixed; None
-            for an open finding from the latest run.
+            for a finding from the latest run.
+        ignore (Ignore | None): The ignore that covers it, for an ignored
+            finding shown with h; else None.
     """
 
     finding: Finding
     fixed: FixedFinding | None = None
+    ignore: Ignore | None = None
+
+    @property
+    def label(self):
+        """(label, Rich style) for the Severity column and the panel badge."""
+        if self.fixed:
+            return FIXED_LABEL
+        if self.ignore:
+            return IGNORED_LABEL
+        return SEVERITY_STYLES[self.finding.severity]
+
+    @property
+    def is_open(self):
+        """Whether it is a finding to act on: neither fixed nor ignored."""
+        return self.fixed is None and self.ignore is None
 
 
 class FindingsScreen(Screen):
@@ -65,6 +92,7 @@ class FindingsScreen(Screen):
         open_url (Callable[[str], object]): Opens an address in a browser.
         show_folder (Callable[[Path], object]): Shows a folder in the file browser.
         fix_log_path (Path): The fix log.
+        ignore_path (Path): The ignore list.
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -74,6 +102,8 @@ class FindingsScreen(Screen):
         Binding("u", "undo", "Undo"),
         Binding("c", "clear", "Clear"),
         Binding("C", "clear_all", "Clear all fixed"),
+        Binding("i", "ignore", "Ignore / un-ignore"),
+        Binding("h", "toggle_ignored", "Show/hide ignored"),
         Binding("o", "open_editor", "Open in editor"),
         Binding("r", "rerun", "Re-run checks"),
         Binding("s", "app.open_setup", "Setup"),
@@ -81,7 +111,14 @@ class FindingsScreen(Screen):
     ]
 
     def __init__(
-        self, course_dir, check, open_in_editor, open_url, show_folder, fix_log_path
+        self,
+        course_dir,
+        check,
+        open_in_editor,
+        open_url,
+        show_folder,
+        fix_log_path,
+        ignore_path,
     ):
         super().__init__()
         self.course_dir = course_dir
@@ -90,8 +127,11 @@ class FindingsScreen(Screen):
         self._open_url = open_url
         self._show_folder = show_folder
         self._fix_log_path = fix_log_path
+        self._ignore_path = ignore_path
         self._run = None
         self._fixed = []
+        self._ignores = []
+        self._show_ignored = False
         self._rows = []
 
     def compose(self) -> ComposeResult:
@@ -112,19 +152,25 @@ class FindingsScreen(Screen):
                     yield Button("View on site", id="view-site")
                     yield Button("Undo", variant="warning", id="undo")
                     yield Button("Clear", id="clear")
+                    yield Button("Ignore", id="ignore")
+                    yield Button("Un-ignore", id="unignore")
         yield Footer()
 
     def on_mount(self):
         self.query_one(DataTable).add_columns("Severity", "Line", "File")
-        self._fixed = load_fixed(self._fix_log_path, self.course_dir)
+        self._load_course_state()
         self._show_row(None)
         self._start_checking()
 
     def change_course(self, course_dir):
         """Switch to another course folder and check it."""
         self.course_dir = course_dir
-        self._fixed = load_fixed(self._fix_log_path, self.course_dir)
+        self._load_course_state()
         self._start_checking()
+
+    def _load_course_state(self):
+        self._fixed = load_fixed(self._fix_log_path, self.course_dir)
+        self._ignores = load_ignores(self._ignore_path, self.course_dir)
 
     # Checking
 
@@ -155,17 +201,22 @@ class FindingsScreen(Screen):
     # The list
 
     def _show_rows(self):
-        open_rows = [Row(finding) for finding in self._run.findings]
+        open_rows, ignored_rows = [], []
+        for finding in self._run.findings:
+            ignore = self._ignore_for(finding)
+            if ignore is None:
+                open_rows.append(Row(finding))
+            else:
+                ignored_rows.append(Row(finding, ignore=ignore))
         fixed_rows = [Row(entry.finding, entry) for entry in self._fixed]
-        self._rows = sorted(open_rows + fixed_rows, key=_row_order)
+        shown = open_rows + fixed_rows + (ignored_rows if self._show_ignored else [])
+        self._rows = sorted(shown, key=_row_order)
 
         table = self.query_one(DataTable)
         previous_row = table.cursor_row
         table.clear()
         for row in self._rows:
-            label, style = (
-                FIXED_LABEL if row.fixed else SEVERITY_STYLES[row.finding.severity]
-            )
+            label, style = row.label
             line = "" if row.finding.line is None else str(row.finding.line)
             table.add_row(
                 Text(label, style=style),
@@ -179,6 +230,8 @@ class FindingsScreen(Screen):
         )
         if fixed_rows:
             subtitle += f"  ·  {len(fixed_rows)} fixed"
+        if ignored_rows:
+            subtitle += f"  ·  {len(ignored_rows)} ignored"
         self.app.sub_title = subtitle
 
         table.focus()
@@ -224,7 +277,9 @@ class FindingsScreen(Screen):
         self._detail().update(self._header(row))
         self._show_excerpt(self._excerpt(finding))
         fix = finding.fix
-        if row.fixed is None and fix is not None:
+        buttons["ignore"].display = row.is_open
+        buttons["unignore"].display = row.ignore is not None
+        if row.is_open and fix is not None:
             summary.update(_change("Suggested fix (f):", fix))
             summary.display = True
             buttons["fix"].display = True
@@ -239,24 +294,33 @@ class FindingsScreen(Screen):
 
     def _header(self, row):
         finding = row.finding
-        label, style = FIXED_LABEL if row.fixed else SEVERITY_STYLES[finding.severity]
-        titles = (
-            {}
-            if self._run is None
-            else {result.check.id: result.check.title for result in self._run.results}
-        )
+        label, style = row.label
         header = Text()
         header.append(f" {label} ", style=f"reverse {style}")
-        header.append(f"  {titles.get(finding.check, finding.check)}\n\n", style="bold")
+        header.append(f"  {self._check_title(finding)}\n\n", style="bold")
         header.append(finding.path, style="underline")
         header.append(f"  line {finding.line}" if finding.line else "  whole file")
         header.append("\n\n")
         if row.fixed:
             when = row.fixed.fixed_at.astimezone().strftime("%Y-%m-%d %H:%M")
             header.append(f"Fixed {when}. It was: ", style="italic")
+        if row.ignore:
+            when = row.ignore.ignored_at.astimezone().strftime("%Y-%m-%d %H:%M")
+            reason = row.ignore.reason or "no reason given"
+            header.append(f"Ignored {when}: {reason}\n\n", style="italic")
         header.append(finding.message)
         header.append("\n")
         return header
+
+    def _check_title(self, finding):
+        if self._run is not None:
+            for result in self._run.results:
+                if result.check.id == finding.check:
+                    return result.check.title
+        return finding.check
+
+    def _ignore_for(self, finding):
+        return next((i for i in self._ignores if i.matches(finding)), None)
 
     def _fixed_summary(self, row):
         summary = _change("The fix:", row.finding.fix)
@@ -304,14 +368,47 @@ class FindingsScreen(Screen):
         row = self._current() if self.is_mounted else None
         is_fixed = row is not None and row.fixed is not None
         if action == "fix":
-            return row is not None and not is_fixed and row.finding.fix is not None
+            return row is not None and row.is_open and row.finding.fix is not None
         if action in ("view_editor", "undo", "clear"):
             return is_fixed
         if action == "view_site":
             return is_fixed and _site_url(row) is not None
         if action == "clear_all":
             return bool(self._fixed)
+        if action == "ignore":
+            return row is not None and not is_fixed
+        if action == "toggle_ignored":
+            return bool(self._ignores)
         return True
+
+    def action_ignore(self):
+        """Open the ignore dialog for an open finding; un-ignore an ignored one."""
+        row = self._current()
+        if row is None or row.fixed is not None:
+            return
+        finding = row.finding
+        if row.ignore is not None:
+            self._ignores = [i for i in self._ignores if not i.matches(finding)]
+            self._save_ignores()
+            self._show_rows()
+            return
+
+        def ignored(reason):
+            if reason is None:
+                return
+            self._ignores.append(ignore_finding(finding, reason, datetime.now(UTC)))
+            self._save_ignores()
+            self._show_rows()
+
+        self.app.push_screen(IgnoreDialog(finding, self._check_title(finding)), ignored)
+
+    def action_toggle_ignored(self):
+        self._show_ignored = not self._show_ignored
+        if self._run is not None:
+            self._show_rows()
+
+    def _save_ignores(self):
+        save_ignores(self._ignore_path, self.course_dir, self._ignores)
 
     def on_button_pressed(self, event: Button.Pressed):
         action = BUTTON_ACTIONS.get(event.button.id)
@@ -343,7 +440,7 @@ class FindingsScreen(Screen):
 
     def action_fix(self):
         row = self._current()
-        if row is None or row.fixed is not None or row.finding.fix is None:
+        if row is None or not row.is_open or row.finding.fix is None:
             return
         try:
             apply_fix(self.course_dir / row.finding.path, row.finding.fix)
