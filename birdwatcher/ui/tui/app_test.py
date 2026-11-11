@@ -33,6 +33,7 @@ from birdwatcher.ui.system import Editor
 from birdwatcher.ui.tui.app import BirdwatcherApp
 from birdwatcher.ui.tui.divider import Divider
 from birdwatcher.ui.tui.fix_all import FixAllDialog
+from birdwatcher.ui.tui.keys import KeysDialog
 from birdwatcher.ui.tui.tree import FindingsTree
 
 CHECK = Check(
@@ -763,6 +764,68 @@ def test_enter_keeps_the_search_and_escape_clears_it(tmp_path):
         assert search_box(app).value == ""
         assert isinstance(app.focused, FindingsTree)
         assert len(finding_rows(app)) == 2
+
+    drive(app, steps)
+
+
+def keys_text(app):
+    return render_text(app.screen.query_one("#keys-list", Static).content, width=160)
+
+
+def test_question_mark_lists_every_key_by_group(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIXABLE]), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "question_mark")
+        assert isinstance(app.screen, KeysDialog)
+        text = keys_text(app)
+        for group in ("MOVE", "FILTER", "ACT", "CHECK", "APP"):
+            assert group in text
+        assert "ctrl+r" in text and "hard refresh" in text
+        # On screen, not just in the widget: the list has room to show
+        listing = app.screen.query_one("#keys-list", Static)
+        assert listing.region.width >= 60 and listing.region.height >= 20
+        await press(app, pilot, "escape")
+        assert not isinstance(app.screen, KeysDialog)
+
+    drive(app, steps)
+
+
+def test_keys_that_do_not_apply_now_are_marked(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIXABLE]), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "question_mark")
+        lines = keys_text(app).splitlines()
+        undo = next(line for line in lines if "undo a fix" in line)
+        fix = next(line for line in lines if "fix (on a branch" in line)
+        assert "not now" in undo  # nothing is fixed yet
+        assert "not now" not in fix
+
+    drive(app, steps)
+
+
+def footer_keys(app):
+    """The keys the footer shows right now."""
+    return {
+        key
+        for key, active in app.screen.active_bindings.items()
+        if active.binding.show and active.enabled
+    }
+
+
+def test_the_footer_shows_only_what_applies_plus_keys_and_quit(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIXABLE, SECOND]), course)
+
+    async def steps(app, pilot):
+        assert footer_keys(app) == {"f", "i", "o", "question_mark", "q"}
+        await press(app, pilot, "n")  # a finding with no fix
+        assert footer_keys(app) == {"i", "o", "question_mark", "q"}
+        await on_check_branch(app, pilot)  # one fix in the branch
+        assert footer_keys(app) == {"f", "question_mark", "q"}
 
     drive(app, steps)
 

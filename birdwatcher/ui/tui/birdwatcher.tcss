@@ -186,8 +186,26 @@ Divider:hover, Divider.-dragging {
 }
 
 /* The ignore dialog, centered over the findings */
-IgnoreDialog, FixAllDialog {
+IgnoreDialog, FixAllDialog, KeysDialog {
     align: center middle;
+}
+
+/* A fixed width: a scrolling container with width auto collapses to nothing */
+#keys-dialog {
+    width: 80;
+    max-width: 95%;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    border: double $accent;
+    border-title-align: left;
+    border-title-style: bold;
+    border-title-color: $accent;
+    background: $surface;
+}
+
+#keys-list {
+    width: 1fr;
 }
 
 #ignore-dialog, #fix-all-dialog {

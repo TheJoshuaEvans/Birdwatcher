@@ -45,7 +45,7 @@ The first time the app opens, it asks for the folder of your local clone of the 
 
 Findings appear as each check finishes, so the quick checks show at once while a slow one is still running. When checking again, each check's previous findings stay in the list until its new results arrive.
 
-In the app, mouse and keyboard both work:
+In the app, mouse and keyboard both work. The bottom bar shows the keys for what is selected; `?` lists every key, marking the ones that do not apply right now:
 
 | Do | To |
 |---|---|

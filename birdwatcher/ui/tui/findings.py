@@ -42,6 +42,7 @@ from birdwatcher.ui.tui.divider import Divider
 from birdwatcher.ui.tui.fix_all import FixAllDialog
 from birdwatcher.ui.tui.grouping import Grouping, group_rows
 from birdwatcher.ui.tui.ignore import IgnoreDialog
+from birdwatcher.ui.tui.keys import KeysDialog
 from birdwatcher.ui.tui.retro import StatusChip
 from birdwatcher.ui.tui.rows import Row, row_order
 from birdwatcher.ui.tui.search import SearchBox
@@ -97,26 +98,29 @@ class FindingsScreen(Screen):
             the shown severities whenever they change.
     """
 
+    # The footer shows only what applies to the selection (check_action hides
+    # the rest), plus ? and q; every key is listed by ? (keys.KEY_GROUPS).
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("f", "fix", "Fix"),
+        Binding("o", "open_editor", "Open in editor"),
         Binding("e", "view_editor", "View in editor"),
         Binding("w", "view_site", "View on site"),
         Binding("u", "undo", "Undo"),
         Binding("c", "clear", "Clear"),
-        Binding("C", "clear_all", "Clear all fixed"),
         Binding("i", "ignore", "Ignore / un-ignore"),
-        Binding("h", "toggle_ignored", "Show/hide ignored"),
-        Binding("z", "toggle_zoom", "Zoom"),
         Binding("escape", "unzoom", "Back"),
-        Binding("g", "next_grouping", "Grouping"),
-        Binding("n", "next_finding", "Next"),
-        Binding("p", "previous_finding", "Previous"),
-        Binding("o", "open_editor", "Open in editor"),
-        Binding("r", "rerun", "Re-run checks"),
-        Binding("ctrl+r", "hard_rerun", "Hard refresh"),
         Binding("x", "stop", "Stop checking"),
-        Binding("s", "app.open_setup", "Setup"),
+        Binding("question_mark", "show_keys", "Keys"),
         Binding("q", "app.quit", "Quit"),
+        Binding("C", "clear_all", "Clear all fixed", show=False),
+        Binding("h", "toggle_ignored", "Show/hide ignored", show=False),
+        Binding("z", "toggle_zoom", "Zoom", show=False),
+        Binding("g", "next_grouping", "Grouping", show=False),
+        Binding("n", "next_finding", "Next", show=False),
+        Binding("p", "previous_finding", "Previous", show=False),
+        Binding("r", "rerun", "Re-run checks", show=False),
+        Binding("ctrl+r", "hard_rerun", "Hard refresh", show=False),
+        Binding("s", "app.open_setup", "Setup", show=False),
         Binding("slash", "find", "Find", show=False),
         Binding("minus", "fold_level", "Fold a level", show=False),
         Binding("plus,equals_sign", "unfold_level", "Unfold a level", show=False),
@@ -669,7 +673,14 @@ class FindingsScreen(Screen):
             return self._zoomed
         if action == "stop":
             return self._running and not self._stop_asked.is_set()
+        if action == "open_editor":
+            return row is not None
         return True
+
+    def action_show_keys(self):
+        self.app.push_screen(
+            KeysDialog(lambda action: bool(self.check_action(action, ())))
+        )
 
     def action_stop(self):
         if not self._running or self._stop_asked.is_set():
