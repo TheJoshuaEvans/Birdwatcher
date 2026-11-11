@@ -5,6 +5,8 @@ detail, with fixing (and undoing and clearing fixes) and ignoring.
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
+import threading
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import ClassVar
 
@@ -31,12 +33,14 @@ from birdwatcher.core.config import DEFAULT_SPLIT, SPLIT_RANGE
 from birdwatcher.core.fix_log import FixedFinding, load_fixed, save_fixed
 from birdwatcher.core.fixes import FixError, apply_fix, undo_fix
 from birdwatcher.core.ignores import ignore_finding, load_ignores, save_ignores
+from birdwatcher.core.run import CheckFinished, CheckProgress, CheckStarted, RunResult
 from birdwatcher.ui.tui.divider import Divider
 from birdwatcher.ui.tui.grouping import Grouping, group_rows
 from birdwatcher.ui.tui.ignore import IgnoreDialog
 from birdwatcher.ui.tui.retro import StatusChip
 from birdwatcher.ui.tui.rows import Row, row_order
 from birdwatcher.ui.tui.tree import FindingsTree
+from birdwatcher.ui.tui.watch import WatchStrip
 
 CONTEXT_LINES = 6  # source lines shown above and below a finding
 MIN_PANE_WIDTH = 20  # columns each side keeps when the divider is dragged
@@ -54,6 +58,7 @@ BUTTON_ACTIONS = {
     "ignore": "ignore",
     "unignore": "ignore",
 }
+STOP_BUTTON = "stop"  # the watch strip's button, which runs action_stop
 
 
 class FindingsScreen(Screen):
@@ -63,7 +68,9 @@ class FindingsScreen(Screen):
 
     Args:
         course_dir (Path): The course folder.
-        check (Callable[[Path], RunResult]): Checks a course folder.
+        check (Callable[..., RunResult]): Checks a course folder, as
+            check(course_dir, on_event=..., should_stop=...), the way
+            core.course.check_course does; called on a background thread.
         open_in_editor (Callable[[Path, int], object]): Opens a file at a line.
         open_url (Callable[[str], object]): Opens an address in a browser.
         show_folder (Callable[[Path], object]): Shows a folder in the file browser.
@@ -91,6 +98,7 @@ class FindingsScreen(Screen):
         Binding("p", "previous_finding", "Previous"),
         Binding("o", "open_editor", "Open in editor"),
         Binding("r", "rerun", "Re-run checks"),
+        Binding("x", "stop", "Stop checking"),
         Binding("s", "app.open_setup", "Setup"),
         Binding("q", "app.quit", "Quit"),
     ]
@@ -118,7 +126,12 @@ class FindingsScreen(Screen):
         self._show_folder = show_folder
         self._fix_log_path = fix_log_path
         self._ignore_path = ignore_path
-        self._run = None
+        self._run = None  # the latest result of every check, merged across runs
+        self._stale = set()  # ids of checks whose findings are from an earlier run
+        self._generation = 0  # numbers the runs; events from older runs are dropped
+        self._stop_asked = threading.Event()  # set by x for the current run
+        self._running = False
+        self._running_title = None  # the check the current run is on
         self._fixed = []
         self._ignores = []
         self._grouping = Grouping.CHECK
@@ -139,6 +152,7 @@ class FindingsScreen(Screen):
                     yield StatusChip("FIXED 0", value=True, id="show-fixed")
                     yield StatusChip("IGNORED 0", value=False, id="show-ignored")
                 yield FindingsTree(id="findings")
+                yield WatchStrip(id="watch")
             yield Divider("#findings-pane", min_width=MIN_PANE_WIDTH)
             with VerticalScroll(id="detail-scroll"):
                 yield Static("Checking the course...", id="detail")
@@ -199,6 +213,8 @@ class FindingsScreen(Screen):
     def change_course(self, course_dir):
         """Switch to another course folder and check it."""
         self.course_dir = course_dir
+        self._run, self._stale = None, set()  # another course's findings don't apply
+        self.query_one(WatchStrip).hide()
         self._load_course_state()
         self._start_checking()
 
@@ -209,28 +225,110 @@ class FindingsScreen(Screen):
     # Checking
 
     def _start_checking(self):
+        # A new generation makes any run still going stop at its next progress
+        # report, and drops whatever it sends from then on.
+        self._generation += 1
+        self._stop_asked = threading.Event()
+        self._running = True
+        self._running_title = None
+        if self._run is not None:
+            self._stale = {result.check.id for result in self._run.results}
         self.app.sub_title = f"{self.course_dir}  ·  checking..."
-        self._check_in_background(self.course_dir)
+        self.refresh_bindings()
+        generation, stop_asked = self._generation, self._stop_asked
+        self._check_in_background(
+            self.course_dir,
+            generation,
+            lambda: stop_asked.is_set() or generation != self._generation,
+        )
 
-    @work(thread=True, exclusive=True)
-    def _check_in_background(self, course_dir):
+    @work(thread=True)
+    def _check_in_background(self, course_dir, generation, should_stop):
         # A thread worker that raises would close the app, so every failure is
         # handed to the window instead.
-        try:
-            run = self._check(course_dir)
-        except Exception as error:  # noqa: BLE001
-            self.app.call_from_thread(self._show_error, error)
-        else:
-            self.app.call_from_thread(self._show, run)
+        def on_event(event):
+            if generation == self._generation:
+                self.app.call_from_thread(self._on_run_event, generation, event)
 
-    def _show_error(self, error):
+        try:
+            run = self._check(course_dir, on_event=on_event, should_stop=should_stop)
+        except Exception as error:  # noqa: BLE001
+            if generation == self._generation:
+                self.app.call_from_thread(self._show_error, generation, error)
+        else:
+            if generation == self._generation:
+                self.app.call_from_thread(self._finish, generation, run)
+
+    def on_unmount(self):
+        self._generation += 1  # stops a run still going
+
+    def _on_run_event(self, generation, event):
+        if generation != self._generation:
+            return
+        strip = self.query_one(WatchStrip)
+        if isinstance(event, CheckStarted):
+            self._running_title = event.check.title
+        elif isinstance(event, CheckProgress):
+            if not self._stop_asked.is_set():
+                strip.show_running(
+                    event.check.title, event.done, event.total, event.detail
+                )
+        elif isinstance(event, CheckFinished):
+            self._running_title = None
+            self._merge(event.result)
+            if not self._stop_asked.is_set():
+                strip.hide()
+            self._show_rows()
+
+    def _merge(self, result):
+        """Put a check's newest result in place of its previous one."""
+        self._stale.discard(result.check.id)
+        if self._run is None:
+            self._run = RunResult(self.course_dir, datetime.now(UTC), (result,))
+            return
+        results = list(self._run.results)
+        ids = [previous.check.id for previous in results]
+        if result.check.id in ids:
+            results[ids.index(result.check.id)] = result
+        else:
+            results.append(result)
+        self._run = replace(self._run, results=tuple(results))
+
+    def _finish(self, generation, run):
+        if generation != self._generation:
+            return
+        self._running = False
+        strip = self.query_one(WatchStrip)
+        if run.stopped:
+            if self._run is None:
+                self._run = replace(run, results=())
+            for result in run.results:
+                self._merge(result)
+            titles = [
+                result.check.title
+                for result in self._run.results
+                if result.check.id in self._stale
+            ]
+            if self._running_title and self._running_title not in titles:
+                titles.append(self._running_title)
+            strip.show_stopped(titles)
+        else:
+            self._run = run
+            self._stale = set()
+            strip.hide()
+        self._running_title = None
+        self.refresh_bindings()
+        self._show_rows()
+
+    def _show_error(self, generation, error):
+        if generation != self._generation:
+            return
+        self._running = False
+        self.query_one(WatchStrip).hide()
+        self.refresh_bindings()
         self.app.sub_title = f"{self.course_dir}  ·  check failed"
         self._show_row(None)
         self._detail().update(Text(f"Could not check the course: {error}", style="red"))
-
-    def _show(self, run):
-        self._run = run
-        self._show_rows()
 
     # The list
 
@@ -261,6 +359,8 @@ class FindingsScreen(Screen):
             subtitle += f"  ·  {len(fixed_rows)} fixed"
         if ignored_rows:
             subtitle += f"  ·  {len(ignored_rows)} ignored"
+        if self._running:
+            subtitle += "  ·  checking..."
         self.app.sub_title = subtitle
 
         tree = self.query_one(FindingsTree)
@@ -369,6 +469,14 @@ class FindingsScreen(Screen):
             when = row.ignore.ignored_at.astimezone().strftime("%Y-%m-%d %H:%M")
             reason = row.ignore.reason or "no reason given"
             header.append(f"Ignored {when}: {reason}\n\n", style="italic")
+        if row.fixed is None and finding.check in self._stale:
+            note = (
+                "From an earlier check; this check is running again now."
+                if self._running
+                else "From an earlier check: the last run was stopped before this "
+                "check finished, so it was not re-checked. Press r to check again."
+            )
+            header.append(f"{note}\n\n", style="italic")
         header.append(finding.message)
         header.append("\n")
         return header
@@ -442,7 +550,16 @@ class FindingsScreen(Screen):
             return bool(self._ignores)
         if action == "unzoom":
             return self._zoomed
+        if action == "stop":
+            return self._running and not self._stop_asked.is_set()
         return True
+
+    def action_stop(self):
+        if not self._running or self._stop_asked.is_set():
+            return
+        self._stop_asked.set()
+        self.query_one(WatchStrip).show_stopping()
+        self.refresh_bindings()
 
     def action_ignore(self):
         """Open the ignore dialog for an open finding; un-ignore an ignored one."""
@@ -474,6 +591,8 @@ class FindingsScreen(Screen):
 
     def on_button_pressed(self, event: Button.Pressed):
         action = BUTTON_ACTIONS.get(event.button.id)
+        if event.button.id == STOP_BUTTON:
+            action = "stop"
         if action is not None:
             event.stop()
             # The action methods directly: Screen.run_action is a coroutine.

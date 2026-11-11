@@ -14,7 +14,13 @@ from rich.console import Console
 
 from birdwatcher.core.check import Check
 from birdwatcher.core.findings import Finding, Severity
-from birdwatcher.core.run import CheckFinished, CheckResult, CheckStarted, RunResult
+from birdwatcher.core.run import (
+    CheckFinished,
+    CheckProgress,
+    CheckResult,
+    CheckStarted,
+    RunResult,
+)
 from birdwatcher.ui.console import print_event, print_findings, print_summary
 from birdwatcher.ui.system import editor_url
 
@@ -88,6 +94,12 @@ def test_events_print_progress_and_errors():
     assert "Broken section links" in text
     assert "2 findings" in text
     assert "ValueError: boom" in text
+
+
+def test_progress_events_print_nothing():
+    console, buffer = capture()
+    print_event(console, CheckProgress(CHECK, 3, 10, "en.wikipedia.org"))
+    assert buffer.getvalue() == ""
 
 
 if __name__ == "__main__":

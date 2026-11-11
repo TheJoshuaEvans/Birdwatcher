@@ -76,6 +76,22 @@ Button:hover, Button:focus {
     height: 1fr;
 }
 
+/* The watch strip: what is being checked, at the bottom of the findings pane */
+WatchStrip {
+    display: none;
+    height: auto;
+    border-top: solid $accent;
+    padding: 0 1;
+}
+
+#watch-status {
+    width: 1fr;
+}
+
+#watch-status, #stop {
+    height: 2;
+}
+
 #excerpt-scroll {
     height: auto;
 }

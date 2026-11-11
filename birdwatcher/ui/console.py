@@ -14,7 +14,7 @@ from rich.table import Table
 from rich.text import Text
 
 from birdwatcher.core.findings import Severity
-from birdwatcher.core.run import CheckStarted
+from birdwatcher.core.run import CheckFinished, CheckStarted
 from birdwatcher.ui.severity import SEVERITY_STYLES
 from birdwatcher.ui.system import editor_url
 
@@ -25,11 +25,14 @@ def print_event(console, event):
 
     Args:
         console (rich.console.Console): Where to print.
-        event (CheckStarted | CheckFinished): The event. A finished check prints
-            its finding count and time, or its error.
+        event (CheckStarted | CheckProgress | CheckFinished): The event. A
+            finished check prints its finding count and time, or its error;
+            progress reports print nothing.
     """
     if isinstance(event, CheckStarted):
         console.print(Text(f"Running {event.check.title}...", style="dim"))
+        return
+    if not isinstance(event, CheckFinished):
         return
     result = event.result
     if result.error:

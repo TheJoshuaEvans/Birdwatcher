@@ -43,6 +43,8 @@ uv run birdwatcher check --list-checks
 
 The first time the app opens, it asks for the folder of your local clone of the course repository (the folder that contains `docs/`) and remembers it. Type or paste the path, or press **Browse…** (Ctrl+O) to pick it in your system's folder picker. The setup page (`s`) also lists your recent course folders, so switching between courses is one click, and lets you choose the editor that opens files and the color theme (by default, light or dark to match your system; any theme picked with Ctrl+P is remembered too). `birdwatcher check` uses the same folder unless `--course-dir` names another.
 
+Findings appear as each check finishes, so the quick checks show at once while a slow one is still running. When checking again, each check's previous findings stay in the list until its new results arrive.
+
 In the app, mouse and keyboard both work:
 
 | Do | To |
@@ -63,6 +65,7 @@ In the app, mouse and keyboard both work:
 | `i`, or **Ignore** / **Un-ignore** | Ignore a finding (with an optional reason), or bring back an ignored one |
 | `h` | Show or hide ignored findings (the IGNORED chip) |
 | `r` | Run the checks again, after fixing something |
+| `x`, or **STOP** | Stop a slow check while it runs (its progress shows at the bottom of the list); findings from the checks that finished stay, and `r` checks again |
 | `s` | Choose another course folder |
 | `q` | Quit |
 

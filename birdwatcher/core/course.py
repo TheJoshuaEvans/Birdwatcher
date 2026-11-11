@@ -98,7 +98,7 @@ def published_site_url(repo):
     return f"https://{owner.lower()}.github.io/{name}/"
 
 
-def check_course(course_dir, checks, on_event=None):
+def check_course(course_dir, checks, on_event=None, should_stop=None):
     """
     Run checks over a local clone of the course.
 
@@ -109,12 +109,20 @@ def check_course(course_dir, checks, on_event=None):
         course_dir (Path): The clone's root folder.
         checks (Sequence[Check]): The checks to run, in order (usually
             checks.ALL_CHECKS).
-        on_event (Callable[[CheckStarted | CheckFinished], object] | None):
-            Receives progress events.
+        on_event (Callable[[CheckStarted | CheckProgress | CheckFinished],
+            object] | None): Receives progress events.
+        should_stop (Callable[[], bool] | None): Stops the run once it returns
+            True (see run.run_checks).
 
     Returns:
         RunResult: The results.
     """
     repo = github_repo(course_dir)
     site_url = published_site_url(repo) if repo else None
-    return run_checks(course_dir, checks, site_url=site_url, on_event=on_event)
+    return run_checks(
+        course_dir,
+        checks,
+        site_url=site_url,
+        on_event=on_event,
+        should_stop=should_stop,
+    )

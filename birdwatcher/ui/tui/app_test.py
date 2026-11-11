@@ -59,7 +59,7 @@ class FakeChecker:
         self.outcomes = outcomes or ([],)
         self.folders = []
 
-    def __call__(self, course_dir):
+    def __call__(self, course_dir, on_event=None, should_stop=None):
         self.folders.append(course_dir)
         outcome = self.outcomes[min(len(self.folders), len(self.outcomes)) - 1]
         if isinstance(outcome, Exception):

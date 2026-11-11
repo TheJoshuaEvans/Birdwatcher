@@ -139,5 +139,13 @@ def test_checks_get_no_site_url_without_a_github_origin(tmp_path):
     assert seen[0].site_url is None
 
 
+def test_check_course_can_be_stopped(tmp_path):
+    course = make_course(tmp_path)
+    seen = []
+    run = check_course(course, [recording_check(seen)], should_stop=lambda: True)
+    assert run.stopped is True
+    assert seen == []
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__]))

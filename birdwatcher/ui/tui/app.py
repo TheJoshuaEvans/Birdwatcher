@@ -49,17 +49,21 @@ from birdwatcher.ui.tui.findings import FindingsScreen
 from birdwatcher.ui.tui.setup import SetupScreen
 
 
-def check_with_every_check(course_dir):
+def check_with_every_check(course_dir, on_event=None, should_stop=None):
     """
     Run every registered check over a course folder.
 
     Args:
         course_dir (Path): The course folder.
+        on_event (Callable | None): Receives the run's events, as for
+            core.course.check_course.
+        should_stop (Callable[[], bool] | None): Stops the run once it
+            returns True.
 
     Returns:
         RunResult: The results of checks.ALL_CHECKS.
     """
-    return check_course(course_dir, ALL_CHECKS)
+    return check_course(course_dir, ALL_CHECKS, on_event, should_stop)
 
 
 class BirdwatcherApp(App):
@@ -128,8 +132,12 @@ class BirdwatcherApp(App):
 
     Args:
         config_path (Path): The settings file to read and save.
-        check (Callable[[Path], RunResult]): Checks a course folder; called
-            when the findings view opens and on every re-run. May raise.
+        check (Callable[..., RunResult]): Checks a course folder, as
+            check(course_dir, on_event=..., should_stop=...); called on a
+            background thread when the findings view opens and on every
+            re-run. May raise. Findings appear as each check finishes; while
+            a check that reports progress runs, the watch strip shows it, and
+            x (or the strip's STOP button) stops the run.
             Defaults to check_with_every_check.
         editors (Mapping[str, Editor] | None): The editors on offer, by id, in
             display order; None means system.desktop_editors(). Findings about
