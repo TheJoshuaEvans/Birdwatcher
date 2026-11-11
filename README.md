@@ -51,7 +51,8 @@ In the app, mouse and keyboard both work:
 |---|---|
 | Click a finding, or `n` / `p` (next / previous finding) | Show it: check, location, message, and the source lines around it |
 | Click it again, or press Enter or `o` | Open the file at that line in your editor |
-| Click a branch, or the arrow keys and Enter | Fold or unfold it |
+| Click a branch, or the arrow keys and Enter | Fold or unfold it (folded branches stay folded when the checks run again) |
+| `-` / `+` | Fold or unfold one level of branches at a time: from everything open, `-` folds the deepest level, down to one line per check (or the top folder); `+` opens the list back up a level at a time |
 | `z`, then `z` or Escape to go back | Show the finding's detail filling the window (in a window narrower than 120 columns, the detail is shown this way instead of beside the list) |
 | Drag the bar between the panes | Change the split; Birdwatcher remembers it |
 | The **Check / Folder** tabs, or `g` | Group the findings by check or by folder |

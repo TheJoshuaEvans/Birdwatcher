@@ -111,6 +111,8 @@ class FindingsScreen(Screen):
         Binding("x", "stop", "Stop checking"),
         Binding("s", "app.open_setup", "Setup"),
         Binding("q", "app.quit", "Quit"),
+        Binding("minus", "fold_level", "Fold a level", show=False),
+        Binding("plus,equals_sign", "unfold_level", "Unfold a level", show=False),
         Binding("1", "toggle_severity('error')", "Errors", show=False),
         Binding("2", "toggle_severity('warning')", "Warnings", show=False),
         Binding("3", "toggle_severity('info')", "Info", show=False),
@@ -452,6 +454,12 @@ class FindingsScreen(Screen):
 
     def _severity_chip(self, severity):
         return self.query_one(f"#{SEVERITY_CHIP_PREFIX}{severity.value}", Checkbox)
+
+    def action_fold_level(self):
+        self.query_one(FindingsTree).fold_level()
+
+    def action_unfold_level(self):
+        self.query_one(FindingsTree).unfold_level()
 
     def action_toggle_severity(self, name):
         self._severity_chip(Severity(name)).toggle()

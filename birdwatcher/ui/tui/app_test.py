@@ -691,6 +691,80 @@ def test_the_list_opens_with_the_saved_severities(tmp_path):
     drive(app, steps)
 
 
+def cursor_label(app):
+    node = app.screen.query_one(FindingsTree).cursor_node
+    return "" if node is None else str(node.label)
+
+
+def visible_lines(app):
+    return app.screen.query_one(FindingsTree).last_line + 1
+
+
+@pytest.mark.parametrize("expand_key", ["plus", "equals_sign"])
+def test_minus_and_plus_fold_and_unfold_one_level_at_a_time(tmp_path, expand_key):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
+
+    async def steps(app, pilot):
+        # Broken section links › docs/A.md, docs/B.md › one row each
+        await press(app, pilot, "n")  # onto SECOND, in docs/B.md
+        assert visible_lines(app) == 5
+        await press(app, pilot, "minus")  # the files fold
+        assert (visible_lines(app), leaves(app)) == (3, [])
+        assert cursor_label(app).startswith("docs/B.md")
+        await press(app, pilot, "minus")  # the check folds
+        assert visible_lines(app) == 1
+        assert cursor_label(app).startswith("Broken section links")
+        await press(app, pilot, "minus")  # nothing left to fold
+        assert visible_lines(app) == 1
+        await press(app, pilot, expand_key)
+        assert (visible_lines(app), leaves(app)) == (3, [])
+        await press(app, pilot, expand_key)
+        assert visible_lines(app) == 5
+        await press(app, pilot, expand_key)  # nothing left to unfold
+        assert visible_lines(app) == 5
+
+    drive(app, steps)
+
+
+def test_plus_unfolds_the_shallowest_folded_level_first(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
+
+    async def steps(app, pilot):
+        tree = app.screen.query_one(FindingsTree)
+        [check_branch] = tree.root.children
+        check_branch.children[0].collapse()  # docs/A.md, by hand
+        await settle(app, pilot)
+        assert visible_lines(app) == 4
+        await press(app, pilot, "plus")
+        assert visible_lines(app) == 5
+
+    drive(app, steps)
+
+
+def test_folded_branches_stay_folded_when_the_list_is_rebuilt(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
+
+    async def steps(app, pilot):
+        tree = app.screen.query_one(FindingsTree)
+        [check_branch] = tree.root.children
+        file_a = check_branch.children[0]
+        file_a.collapse()
+        await settle(app, pilot)
+        assert len(leaves(app)) == 1
+        await press(app, pilot, "r")
+        assert len(leaves(app)) == 1
+        assert SECOND.message in render_text(leaves(app)[0].label)
+
+        await press(app, pilot, "minus")
+        await press(app, pilot, "r")
+        assert leaves(app) == []
+
+    drive(app, steps)
+
+
 def test_n_and_p_move_between_findings_skipping_branches(tmp_path):
     course = make_course(tmp_path / "course")
     app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
