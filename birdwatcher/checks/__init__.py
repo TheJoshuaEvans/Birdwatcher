@@ -16,6 +16,7 @@ from birdwatcher.checks import (
     headings,
     images,
     labels,
+    links,
     numbering,
 )
 from birdwatcher.core.check import Check
@@ -79,5 +80,15 @@ ALL_CHECKS = (
             "matter. The site uses the title for the breadcrumb and browser tab."
         ),
         run=lambda context: frontmatter.check_front_matter(context.root),
+    ),
+    Check(
+        id=links.CHECK,
+        title="Dead links",
+        description=(
+            "Links and images that lead to nothing on the published site: missing "
+            "pages and files, paths outside the site, and paths whose letter case "
+            "only works on Windows and macOS (the site's server tells them apart)."
+        ),
+        run=lambda context: links.check_links(context.root, context.site_url),
     ),
 )

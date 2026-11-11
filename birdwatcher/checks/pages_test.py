@@ -15,6 +15,7 @@ from birdwatcher.checks.pages import (
     TEXT,
     front_matter,
     line_kinds,
+    page_links,
     prose_lines,
     read_page,
     site_pages,
@@ -41,6 +42,18 @@ def test_site_pages_skip_jekyll_and_hidden_folders(tmp_path):
     assert [p.relative_to(tmp_path).as_posix() for p in site_pages(tmp_path)] == [
         "A.md",
         "Labs/B.md",
+    ]
+
+
+def test_site_pages_can_include_other_kinds_of_page(tmp_path):
+    for path in ("A.md", "Labs/B.html", "_layouts/C.html", "Labs/x.txt"):
+        file = tmp_path / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text("", encoding="utf-8")
+    pages = site_pages(tmp_path, suffixes=(".md", ".html"))
+    assert [p.relative_to(tmp_path).as_posix() for p in pages] == [
+        "A.md",
+        "Labs/B.html",
     ]
 
 
@@ -83,6 +96,76 @@ def test_prose_lines_keep_line_numbers():
 )
 def test_front_matter_reads_top_level_keys(text, expected):
     assert front_matter(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("line", "targets"),
+    [
+        ("See [the lab](Labs/Lab05.md) now.", ["Labs/Lab05.md"]),
+        ('[Docs](https://example.com/a "Title")', ["https://example.com/a"]),
+        ("[Spaced](<My Page.md>)", ["My Page.md"]),
+        ("![A chart](Images/chart.png)", ["Images/chart.png"]),
+        ("[![badge](b.svg)](https://ci.example)", ["b.svg", "https://ci.example"]),
+        ("[ref]: https://example.com/ref", ["https://example.com/ref"]),
+        ('<a href="Page.html#top">x</a>', ["Page.html#top"]),
+        ("<img src='Images/a.png' alt='a'>", ["Images/a.png"]),
+        ("[one](a.md) and [two](b.md)", ["a.md", "b.md"]),
+    ],
+    ids=[
+        "link",
+        "titled",
+        "angle-brackets",
+        "image",
+        "image-in-link",
+        "reference",
+        "href",
+        "src",
+        "two",
+    ],
+)
+def test_page_links_finds_links_and_images(line, targets):
+    assert page_links(f"Intro\n{line}\n") == [(2, target) for target in targets]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("[^1]: In Keras, layers are objects.\n", []),
+        ("[^2]: See [the guide](guide.md).\n", [(1, "guide.md")]),
+        ("Use `[x](not-a-link.md)` in code.\n", []),
+        ("```\n[x](in-a-fence.md)\n```\n", []),
+        ("---\nlink: '[x](front.md)'\n---\n", []),
+        ("Plain [brackets] and (parentheses).\n", []),
+    ],
+    ids=[
+        "footnote",
+        "link-in-footnote",
+        "inline-code",
+        "fence",
+        "front-matter",
+        "plain",
+    ],
+)
+def test_page_links_leaves_out_what_is_not_a_link(text, expected):
+    assert page_links(text) == expected
+
+
+def test_page_links_in_html_reads_only_attributes_outside_styles_and_scripts():
+    text = (
+        "<style>\n"
+        '[contenteditable="true"]:active, a { color: red }\n'
+        "a { background: url(skip.png) }\n"
+        "</style>\n"
+        '<p>[Not](markdown.md) <a href="Page.html">x</a></p>\n'
+        '<script>var s = "<img src=\'skip.png\'>";</script> <img src="a.png">\n'
+        "```\n"
+        '<a href="after-backticks.html">y</a>\n'
+    )
+    assert page_links(text, html=True) == [
+        (5, "Page.html"),
+        (6, "a.png"),
+        (8, "after-backticks.html"),
+    ]
 
 
 if __name__ == "__main__":

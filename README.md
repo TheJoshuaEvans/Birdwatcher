@@ -103,6 +103,8 @@ Checks produce findings as plain data: the check, the severity, the file and lin
 - [x] **Skipped heading levels:** a heading more than one level below the previous one, which breaks navigation for screen-reader users. Markdown headings are fixable (moved up to one level below the previous heading).
 - [x] **Images without alt text:** images that screen readers cannot describe. An HTML `alt=""` (a decorative image) is fine.
 - [x] **Incomplete front matter:** published pages missing a `title`, `description` or `author` (README files are skipped; the site doesn't publish them).
+- [x] **Dead links:** links and images, in Markdown and HTML pages, that lead to nothing on the published site: missing pages and files (with a "did you mean" when a file has a close name), paths outside `docs/`, and paths whose letter case only works on Windows and macOS, because the site's server tells `Images/` and `images/` apart (fixable: the path is spelled as the file is).
+- [ ] **Dead links to other sites:** checked over the network in the background, following the course's own `lychee.toml` and `.lycheeignore`.
 - [ ] **Python style:** [Ruff](https://docs.astral.sh/ruff/) over the course's `.py` files, using the rules from the course's own `PythonStyleAndBestPracticesChecklist.md`.
 
 ### Ideas for later

@@ -15,22 +15,40 @@ FRONT_KEY = re.compile(r"^([A-Za-z_][\w-]*)[ \t]*:[ \t]*(.*?)[ \t]*$")
 
 FRONT, FENCE, CODE, TEXT = "front matter", "fence", "code", "text"  # line kinds
 
+# Links. A target is either <anything but angle brackets> or has no spaces.
+_TARGET = r"\(\s*(?:<(?P<angled>[^<>\n]+)>|(?P<bare>[^\s<>()]+))(?:\s+(?:\"[^\"]*\"|'[^']*'))?\s*\)"
+INLINE_LINK = re.compile(r"(?<!!)\[(?:[^\[\]]|\[[^\[\]]*\])*\]" + _TARGET)
+INLINE_IMAGE = re.compile(r"!\[[^\[\]]*\]" + _TARGET)
+REFERENCE_DEFINITION = re.compile(
+    r"^ {0,3}\[(?!\^)[^\]]+\]:[ \t]*(?:<(?P<angled>[^<>\n]+)>|(?P<bare>\S+))"
+)
+HTML_ATTRIBUTE = re.compile(
+    r"""\b(?:href|src)\s*=\s*["'](?P<bare>[^"']+)["']""", re.IGNORECASE
+)
+INLINE_CODE = re.compile(r"(`+)(.+?)\1")
+STYLE_OR_SCRIPT = re.compile(r"<(style|script)\b.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
 
-def site_pages(docs):
+
+def site_pages(docs, suffixes=(".md",)):
     """
-    The site's Markdown pages: every .md file under docs/, except in folders
-    whose names start with "_" (Jekyll's own) or "." (hidden).
+    The site's pages: every file under docs/ with one of the suffixes (by
+    default its Markdown pages), except in folders whose names start with "_"
+    (Jekyll's own) or "." (hidden).
 
     Args:
         docs (Path): The docs/ folder.
+        suffixes (Sequence[str]): The kinds of page wanted, lowercase with
+            the dot, e.g. (".md", ".html").
 
     Returns:
         list[Path]: In path order.
     """
     pages = (
         page
-        for page in docs.rglob("*.md")
-        if not any(
+        for page in docs.rglob("*")
+        if page.suffix.lower() in suffixes
+        and page.is_file()
+        and not any(
             part.startswith(("_", ".")) for part in page.relative_to(docs).parts[:-1]
         )
     )
@@ -102,6 +120,50 @@ def prose_lines(text):
             the others.
     """
     return [line if kind == TEXT else "" for kind, line in line_kinds(text)]
+
+
+def page_links(text, html=False):
+    """
+    Every link and image target in a page's prose.
+
+    Finds Markdown links and images ("[text](target)", "![alt](target)", with
+    an optional title), link reference definitions ("[name]: target"), and
+    HTML href and src attributes. Front matter, fenced code blocks, inline
+    code and footnotes ("[^1]: text") are left out.
+
+    Args:
+        text (str): The page's text, as from read_page.
+        html (bool): True for an HTML page: only href and src attributes
+            count, outside <style> and <script> blocks, and Markdown syntax
+            means nothing.
+
+    Returns:
+        list[tuple[int, str]]: (line number, target) in page order, the
+            target exactly as written (angle brackets around it removed).
+    """
+    if html:
+        # Blank the blocks out character by character so line numbers stay true.
+        text = STYLE_OR_SCRIPT.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+        return [
+            (number, match.group("bare"))
+            for number, line in enumerate(text.split("\n"), start=1)
+            for match in HTML_ATTRIBUTE.finditer(line)
+        ]
+    found = []
+    for number, line in enumerate(prose_lines(text), start=1):
+        line = INLINE_CODE.sub(lambda match: " " * len(match.group(0)), line)
+        targets = []
+        for pattern in (
+            INLINE_LINK,
+            INLINE_IMAGE,
+            REFERENCE_DEFINITION,
+            HTML_ATTRIBUTE,
+        ):
+            for match in pattern.finditer(line):
+                group = "angled" if match.groupdict().get("angled") else "bare"
+                targets.append((match.start(group), match.group(group)))
+        found.extend((number, target) for _, target in sorted(targets))
+    return found
 
 
 def front_matter(text):

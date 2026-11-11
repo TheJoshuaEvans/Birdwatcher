@@ -15,7 +15,13 @@ import urllib.parse
 from collections import Counter
 from pathlib import Path
 
-from birdwatcher.checks.pages import prose_lines, read_page, site_pages
+from birdwatcher.checks.pages import (
+    INLINE_CODE,
+    page_links,
+    prose_lines,
+    read_page,
+    site_pages,
+)
 from birdwatcher.core.course import DOCS_FOLDER
 from birdwatcher.core.findings import Destination, Finding, Fix, Severity
 
@@ -28,13 +34,6 @@ SUGGESTION_CUTOFF = 0.6  # difflib similarity needed to suggest an existing id
 ATX_HEADING = re.compile(r"^ {0,3}#{1,6}(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
 EXPLICIT_ID = re.compile(r"[ \t]*\{:?[ \t]*#([\w-]+)[^}]*\}[ \t]*$")
 ID_ATTRIBUTE = re.compile(r"""\b(?:id|name)\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
-INLINE_CODE = re.compile(r"(`+)(.+?)\1")
-INLINE_LINK = re.compile(
-    r"(?<!!)\[(?:[^\[\]]|\[[^\[\]]*\])*\]"  # link text, allowing one level of brackets
-    r"\(\s*<?([^\s<>()]+)>?(?:\s+(?:\"[^\"]*\"|'[^']*'))?\s*\)"  # target, optional title
-)
-REFERENCE_DEFINITION = re.compile(r"^ {0,3}\[[^\]]+\]:[ \t]*<?([^\s>]+)>?")
-HREF = re.compile(r"""\bhref\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
 URL_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 # Reducing inline Markdown and HTML in a heading to its text
@@ -115,7 +114,7 @@ def check_anchors(repo_root, site_url):
 
     findings = []
     for page in site_pages(docs):
-        for line_number, target in _links(_block_lines(page)):
+        for line_number, target in page_links(read_page(page)):
             resolved = _resolve(page, target, docs, site_url)
             if resolved is None:
                 continue
@@ -152,15 +151,6 @@ def check_anchors(repo_root, site_url):
 def _block_lines(page):
     """The page's lines with front matter and fenced code blocks blanked out."""
     return prose_lines(read_page(page))
-
-
-def _links(lines):
-    """Yield (line number, target) for every link outside inline code."""
-    for number, line in enumerate(lines, start=1):
-        line = INLINE_CODE.sub(lambda match: " " * len(match.group(0)), line)
-        for pattern in (INLINE_LINK, HREF, REFERENCE_DEFINITION):
-            for match in pattern.finditer(line):
-                yield number, match.group(1)
 
 
 def _page_anchors(page):
