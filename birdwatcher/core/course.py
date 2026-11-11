@@ -98,7 +98,9 @@ def published_site_url(repo):
     return f"https://{owner.lower()}.github.io/{name}/"
 
 
-def check_course(course_dir, checks, on_event=None, should_stop=None):
+def check_course(
+    course_dir, checks, on_event=None, should_stop=None, look_up_links=None
+):
     """
     Run checks over a local clone of the course.
 
@@ -113,6 +115,8 @@ def check_course(course_dir, checks, on_event=None, should_stop=None):
             object] | None): Receives progress events.
         should_stop (Callable[[], bool] | None): Stops the run once it returns
             True (see run.run_checks).
+        look_up_links (Callable | None): How checks ask web servers about
+            addresses (see run.run_checks); None keeps them off the network.
 
     Returns:
         RunResult: The results.
@@ -125,4 +129,5 @@ def check_course(course_dir, checks, on_event=None, should_stop=None):
         site_url=site_url,
         on_event=on_event,
         should_stop=should_stop,
+        look_up_links=look_up_links,
     )

@@ -123,7 +123,15 @@ class CheckFinished:
     result: CheckResult
 
 
-def run_checks(course_dir, checks, *, site_url=None, on_event=None, should_stop=None):
+def run_checks(
+    course_dir,
+    checks,
+    *,
+    site_url=None,
+    on_event=None,
+    should_stop=None,
+    look_up_links=None,
+):
     """
     Run checks over a course folder and collect the results.
 
@@ -146,6 +154,8 @@ def run_checks(course_dir, checks, *, site_url=None, on_event=None, should_stop=
             (unless the check reports progress from another thread).
         should_stop (Callable[[], bool] | None): Asked before each check and
             at each progress report whether to stop; None never stops.
+        look_up_links (Callable | None): Given to each check as
+            CheckContext.look_up_links; None keeps checks off the network.
 
     Returns:
         RunResult: The results, stamped with the time the run started.
@@ -163,6 +173,7 @@ def run_checks(course_dir, checks, *, site_url=None, on_event=None, should_stop=
             root=course_dir,
             site_url=site_url,
             report_progress=partial(_report_progress, check, notify, stopping),
+            look_up_links=look_up_links,
         )
         notify(CheckStarted(check))
         start = time.perf_counter()

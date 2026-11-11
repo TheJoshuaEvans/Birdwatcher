@@ -32,11 +32,15 @@ class CheckContext:
             optionally what it is working on (a str, or None). It raises
             CheckStopped when the run has been asked to stop, so a check that
             reports progress can be stopped. Calling it is optional.
+        look_up_links: Asks web servers about addresses, as
+            core.web.look_up_links(addresses, report_progress) does; None
+            when the network is not to be used.
     """
 
     root: Path
     site_url: str | None
     report_progress: Callable[..., None] = ignore_progress
+    look_up_links: Callable[..., dict] | None = None
 
 
 @dataclass(frozen=True)

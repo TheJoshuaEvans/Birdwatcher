@@ -19,6 +19,8 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 import webbrowser
 from collections.abc import Callable, Mapping
 from dataclasses import replace
+from datetime import timedelta
+from functools import partial
 from pathlib import Path
 
 from textual.app import App
@@ -36,6 +38,7 @@ from birdwatcher.core.course import check_course, course_problem
 from birdwatcher.core.fix_log import FIX_LOG_FILE
 from birdwatcher.core.ignores import IGNORE_FILE
 from birdwatcher.core.run import RunResult
+from birdwatcher.core.web import LINK_CACHE_FILE, MAX_AGE, look_up_links
 from birdwatcher.ui.system import (
     Editor,
     choose_folder_dialog,
@@ -49,9 +52,12 @@ from birdwatcher.ui.tui.findings import FindingsScreen
 from birdwatcher.ui.tui.setup import SetupScreen
 
 
-def check_with_every_check(course_dir, on_event=None, should_stop=None):
+def check_with_every_check(
+    course_dir, on_event=None, should_stop=None, link_cache=None, fresh=False
+):
     """
-    Run every registered check over a course folder.
+    Run every registered check over a course folder, using the network for
+    the checks that need it.
 
     Args:
         course_dir (Path): The course folder.
@@ -59,11 +65,17 @@ def check_with_every_check(course_dir, on_event=None, should_stop=None):
             core.course.check_course.
         should_stop (Callable[[], bool] | None): Stops the run once it
             returns True.
+        link_cache (Path | None): Where answers from web servers are kept
+            for a day (see core.web.look_up_links); None keeps none.
+        fresh (bool): Ask web servers again about every address, replacing
+            the answers kept in link_cache.
 
     Returns:
         RunResult: The results of checks.ALL_CHECKS.
     """
-    return check_course(course_dir, ALL_CHECKS, on_event, should_stop)
+    max_age = timedelta(0) if fresh else MAX_AGE
+    look_up = partial(look_up_links, cache_path=link_cache, max_age=max_age)
+    return check_course(course_dir, ALL_CHECKS, on_event, should_stop, look_up)
 
 
 class BirdwatcherApp(App):
@@ -138,7 +150,8 @@ class BirdwatcherApp(App):
             re-run. May raise. Findings appear as each check finishes; while
             a check that reports progress runs, the watch strip shows it, and
             x (or the strip's STOP button) stops the run.
-            Defaults to check_with_every_check.
+            Defaults to check_with_every_check, keeping web answers in
+            core.web.LINK_CACHE_FILE next to the settings.
         editors (Mapping[str, Editor] | None): The editors on offer, by id, in
             display order; None means system.desktop_editors(). Findings about
             a whole file open at line 1.
@@ -165,7 +178,7 @@ class BirdwatcherApp(App):
         self,
         config_path: Path,
         *,
-        check: Callable[[Path], RunResult] = check_with_every_check,
+        check: Callable[..., RunResult] | None = None,
         editors: Mapping[str, Editor] | None = None,
         choose_folder: Callable[[Path | None], Path | None] = choose_folder_dialog,
         open_url: Callable[[str], object] = webbrowser.open,
@@ -190,7 +203,10 @@ class BirdwatcherApp(App):
             else Path(fix_log_path)
         )
         self._config_path = Path(config_path)
-        self._check = check
+        self._check = check or partial(
+            check_with_every_check,
+            link_cache=Path(config_path).with_name(LINK_CACHE_FILE),
+        )
         self._editors = desktop_editors() if editors is None else dict(editors)
         self._choose_folder = choose_folder
         self._config = None

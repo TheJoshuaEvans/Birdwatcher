@@ -65,6 +65,7 @@ In the app, mouse and keyboard both work:
 | `i`, or **Ignore** / **Un-ignore** | Ignore a finding (with an optional reason), or bring back an ignored one |
 | `h` | Show or hide ignored findings (the IGNORED chip) |
 | `r` | Run the checks again, after fixing something |
+| `ctrl+r` | Hard refresh: run the checks again, asking every web site afresh instead of reusing the day's answers |
 | `x`, or **STOP** | Stop a slow check while it runs (its progress shows at the bottom of the list); findings from the checks that finished stay, and `r` checks again |
 | `s` | Choose another course folder |
 | `q` | Quit |
@@ -104,7 +105,7 @@ Checks produce findings as plain data: the check, the severity, the file and lin
 - [x] **Images without alt text:** images that screen readers cannot describe. An HTML `alt=""` (a decorative image) is fine.
 - [x] **Incomplete front matter:** published pages missing a `title`, `description` or `author` (README files are skipped; the site doesn't publish them).
 - [x] **Dead links:** links and images, in Markdown and HTML pages, that lead to nothing on the published site: missing pages and files (with a "did you mean" when a file has a close name), paths outside `docs/`, and paths whose letter case only works on Windows and macOS, because the site's server tells `Images/` and `images/` apart (fixable: the path is spelled as the file is).
-- [ ] **Dead links to other sites:** checked over the network in the background, following the course's own `lychee.toml` and `.lycheeignore`.
+- [x] **Dead links to other sites:** asked about over the network, in the background with progress at the bottom of the list (`x` stops it). Errors: pages that are gone (404, 410), server errors (5xx), and addresses nothing answers. Info: sites that turn automated checks away (401, 403, 429, other 4xx; open them in a browser to be sure), and pages that moved permanently to a different address (fixable: the link gets the new address; moves that only add `https`, `www.` or a trailing `/` are skipped). Addresses in the course's `.lycheeignore` or `lychee.toml` `exclude` list are skipped, as are `localhost` addresses. Birdwatcher asks each server about at most two pages at a time, identifies itself as a link checker, and keeps answers for a day in `links.json` next to its settings (server errors and failures are asked again on the next run).
 - [ ] **Python style:** [Ruff](https://docs.astral.sh/ruff/) over the course's `.py` files, using the rules from the course's own `PythonStyleAndBestPracticesChecklist.md`.
 
 ### Ideas for later

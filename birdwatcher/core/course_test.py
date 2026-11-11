@@ -139,6 +139,17 @@ def test_checks_get_no_site_url_without_a_github_origin(tmp_path):
     assert seen[0].site_url is None
 
 
+def test_check_course_passes_on_the_link_look_up(tmp_path):
+    course = make_course(tmp_path)
+    seen = []
+
+    def look_up(urls, report_progress):
+        return {}
+
+    check_course(course, [recording_check(seen)], look_up_links=look_up)
+    assert seen[0].look_up_links is look_up
+
+
 def test_check_course_can_be_stopped(tmp_path):
     course = make_course(tmp_path)
     seen = []

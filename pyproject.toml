@@ -11,6 +11,7 @@ dependencies = [
     "platformdirs>=4.14.5",
     "rich>=15.0.0",
     "textual>=8.2.8",
+    "truststore>=0.10.5",
 ]
 
 [project.scripts]

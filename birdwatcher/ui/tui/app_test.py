@@ -53,14 +53,17 @@ def make_course(folder):
 
 class FakeChecker:
     """Stands in for check_course: returns each findings list in turn (the last
-    repeats) and records which folders were checked. An exception is raised."""
+    repeats) and records which folders were checked, and whether each run
+    asked for fresh answers from the web. An exception is raised."""
 
     def __init__(self, *outcomes):
         self.outcomes = outcomes or ([],)
         self.folders = []
+        self.fresh = []
 
-    def __call__(self, course_dir, on_event=None, should_stop=None):
+    def __call__(self, course_dir, on_event=None, should_stop=None, fresh=False):
         self.folders.append(course_dir)
+        self.fresh.append(fresh)
         outcome = self.outcomes[min(len(self.folders), len(self.outcomes)) - 1]
         if isinstance(outcome, Exception):
             raise outcome
@@ -846,6 +849,22 @@ def test_r_runs_the_checks_again_and_shows_the_new_results(tmp_path):
         assert len(rows) == 1 and "docs/B.md" in rows[0]
         assert "1 finding" in app.sub_title
         assert SECOND.message in panel_text(app)
+
+    drive(app, steps)
+
+
+def test_ctrl_r_runs_the_checks_again_asking_the_web_afresh(tmp_path):
+    course = make_course(tmp_path / "course")
+    checker = FakeChecker([FIRST, SECOND], [SECOND])
+    app, _ = make_app(tmp_path, checker, course)
+
+    async def steps(app, pilot):
+        await pilot.press("ctrl+r")
+        await settle(app, pilot)
+        await pilot.press("r")
+        await settle(app, pilot)
+        assert checker.fresh == [False, True, False]
+        assert len(finding_rows(app)) == 1
 
     drive(app, steps)
 

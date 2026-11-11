@@ -12,6 +12,7 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 
 from birdwatcher.checks import (
     anchors,
+    external_links,
     frontmatter,
     headings,
     images,
@@ -90,5 +91,21 @@ ALL_CHECKS = (
             "only works on Windows and macOS (the site's server tells them apart)."
         ),
         run=lambda context: links.check_links(context.root, context.site_url),
+    ),
+    Check(
+        id=external_links.CHECK,
+        title="Dead links to other sites",
+        description=(
+            "Links to other web sites that no longer work: pages that are gone, "
+            "servers that fail, and addresses nothing answers. Pages that moved "
+            "permanently and sites that turn automated checks away are noted too. "
+            "Needs the network; answers are reused for a day."
+        ),
+        run=lambda context: external_links.check_external_links(
+            context.root,
+            context.site_url,
+            context.look_up_links,
+            context.report_progress,
+        ),
     ),
 )

@@ -52,6 +52,17 @@ def test_site_url_is_optional():
     assert seen[0].site_url is None
 
 
+def test_checks_get_the_link_look_up_when_there_is_one():
+    seen = []
+
+    def look_up(urls, report_progress):
+        return {}
+
+    run_checks(COURSE, [fake_check("one", seen=seen)], look_up_links=look_up)
+    run_checks(COURSE, [fake_check("two", seen=seen)])
+    assert [context.look_up_links for context in seen] == [look_up, None]
+
+
 def test_result_describes_the_run():
     before = datetime.now(UTC)
     result = run_checks(COURSE, [fake_check("one")])

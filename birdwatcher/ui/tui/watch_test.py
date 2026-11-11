@@ -62,7 +62,7 @@ class SlowChecks:
         self.slow_findings = [SLOW]
         self.stops = []
 
-    def __call__(self, course_dir, on_event=None, should_stop=None):
+    def __call__(self, course_dir, on_event=None, should_stop=None, fresh=False):
         self.stops.append(should_stop)
         return run_checks(
             course_dir,

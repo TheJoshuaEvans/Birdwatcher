@@ -69,8 +69,10 @@ class FindingsScreen(Screen):
     Args:
         course_dir (Path): The course folder.
         check (Callable[..., RunResult]): Checks a course folder, as
-            check(course_dir, on_event=..., should_stop=...), the way
-            core.course.check_course does; called on a background thread.
+            check(course_dir, on_event=..., should_stop=..., fresh=...),
+            passing events and stopping on as core.course.check_course does;
+            fresh=True (ctrl+r) asks web sites again instead of reusing
+            recent answers. Called on a background thread.
         open_in_editor (Callable[[Path, int], object]): Opens a file at a line.
         open_url (Callable[[str], object]): Opens an address in a browser.
         show_folder (Callable[[Path], object]): Shows a folder in the file browser.
@@ -98,6 +100,7 @@ class FindingsScreen(Screen):
         Binding("p", "previous_finding", "Previous"),
         Binding("o", "open_editor", "Open in editor"),
         Binding("r", "rerun", "Re-run checks"),
+        Binding("ctrl+r", "hard_rerun", "Hard refresh"),
         Binding("x", "stop", "Stop checking"),
         Binding("s", "app.open_setup", "Setup"),
         Binding("q", "app.quit", "Quit"),
@@ -224,7 +227,7 @@ class FindingsScreen(Screen):
 
     # Checking
 
-    def _start_checking(self):
+    def _start_checking(self, fresh=False):
         # A new generation makes any run still going stop at its next progress
         # report, and drops whatever it sends from then on.
         self._generation += 1
@@ -240,10 +243,11 @@ class FindingsScreen(Screen):
             self.course_dir,
             generation,
             lambda: stop_asked.is_set() or generation != self._generation,
+            fresh,
         )
 
     @work(thread=True)
-    def _check_in_background(self, course_dir, generation, should_stop):
+    def _check_in_background(self, course_dir, generation, should_stop, fresh):
         # A thread worker that raises would close the app, so every failure is
         # handed to the window instead.
         def on_event(event):
@@ -251,7 +255,9 @@ class FindingsScreen(Screen):
                 self.app.call_from_thread(self._on_run_event, generation, event)
 
         try:
-            run = self._check(course_dir, on_event=on_event, should_stop=should_stop)
+            run = self._check(
+                course_dir, on_event=on_event, should_stop=should_stop, fresh=fresh
+            )
         except Exception as error:  # noqa: BLE001
             if generation == self._generation:
                 self.app.call_from_thread(self._show_error, generation, error)
@@ -675,6 +681,9 @@ class FindingsScreen(Screen):
 
     def action_rerun(self):
         self._start_checking()
+
+    def action_hard_rerun(self):
+        self._start_checking(fresh=True)
 
     def _save_fixed(self):
         save_fixed(self._fix_log_path, self.course_dir, self._fixed)

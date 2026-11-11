@@ -19,6 +19,7 @@ from rich.text import Text
 from birdwatcher.checks import ALL_CHECKS
 from birdwatcher.core.config import default_config_path, load_config
 from birdwatcher.core.course import check_course, course_problem
+from birdwatcher.core.web import LINK_CACHE_FILE, look_up_links
 from birdwatcher.ui.console import print_event, print_findings, print_summary
 from birdwatcher.ui.tui.app import BirdwatcherApp
 
@@ -92,7 +93,10 @@ def _check(args, config_path, console):
 
     checks = [check for check in ALL_CHECKS if not args.check or check.id in args.check]
     on_event = partial(print_event, console) if args.verbose else None
-    run = check_course(course_dir, checks, on_event)
+    look_up = partial(
+        look_up_links, cache_path=Path(config_path).with_name(LINK_CACHE_FILE)
+    )
+    run = check_course(course_dir, checks, on_event, look_up_links=look_up)
     if args.verbose:
         print_findings(console, run)
     print_summary(console, run)
