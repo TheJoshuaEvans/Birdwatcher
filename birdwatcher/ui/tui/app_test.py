@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 
 import pytest
 from rich.console import Console
+from rich.style import Style
 from textual.widgets import (
     Button,
     Checkbox,
@@ -1384,6 +1385,88 @@ FIXABLE = Finding(
     Fix(3, "broken", "fixed", Destination("docs/B.md", 2, SITE_URL)),
 )
 NO_SITE = replace(FIXABLE, fix=replace(FIXABLE.fix, destination=None))
+
+
+def drawn_row(app, index):
+    """(indent, label) for a showing row, as the tree draws it."""
+    tree = app.screen.query_one(FindingsTree)
+    node = leaves(app)[index]
+    label = tree.render_label(node, Style(), Style())
+    depth = 0
+    parent = node.parent
+    while parent is not None:
+        depth += 1
+        parent = parent.parent
+    indent = max(0, depth - 1) * tree.guide_depth
+    return indent, label
+
+
+def test_a_fixable_row_ends_in_a_fix_marker_at_the_pane_edge(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIXABLE, SECOND]), course)
+
+    async def steps(app, pilot):
+        indent, label = drawn_row(app, 0)
+        assert label.plain.endswith("[F] FIX")
+        assert indent + label.cell_len == usable_width(app)
+        _, plain = drawn_row(app, 1)
+        assert "[F]" not in plain.plain
+
+    drive(app, steps)
+
+
+def usable_width(app):
+    """The tree's width less its vertical scrollbar's, shown or not."""
+    tree = app.screen.query_one(FindingsTree)
+    return tree.size.width - tree.styles.scrollbar_size_vertical
+
+
+def test_fix_markers_stay_clear_of_the_scrollbar_in_a_long_list(tmp_path):
+    course = make_course(tmp_path / "course")
+    many = [replace(FIXABLE, line=n, message=f"Problem {n}.") for n in range(1, 80)]
+    app, _ = make_app(tmp_path, FakeChecker(many), course)
+
+    async def steps(app, pilot):
+        tree = app.screen.query_one(FindingsTree)
+        assert tree.show_vertical_scrollbar
+        indent, label = drawn_row(app, 0)
+        assert indent + label.cell_len == usable_width(app)
+
+    drive(app, steps)
+
+
+def test_long_messages_are_cut_to_the_pane_and_nothing_scrolls_sideways(tmp_path):
+    course = make_course(tmp_path / "course")
+    long = replace(SECOND, message="word " * 100)
+    app, _ = make_app(tmp_path, FakeChecker([long]), course)
+
+    async def steps(app, pilot):
+        tree = app.screen.query_one(FindingsTree)
+        indent, label = drawn_row(app, 0)
+        assert label.plain.endswith("…")
+        assert indent + label.cell_len <= usable_width(app)
+        assert tree.virtual_size.width <= tree.size.width
+
+    drive(app, steps)
+
+
+def test_clicking_a_fix_marker_fixes_that_finding(tmp_path):
+    course = make_course(tmp_path / "course")
+    checker = FakeChecker([SECOND, FIXABLE], [SECOND])
+    app, _ = make_app(tmp_path, checker, course)
+
+    async def steps(app, pilot):
+        tree = app.screen.query_one(FindingsTree)
+        await press(app, pilot, "n")  # onto the other finding
+        node = next(n for n in leaves(app) if n.data.finding == FIXABLE)
+        assert tree.cursor_node is not node
+        y = node.line - tree.scroll_offset.y
+        await pilot.click(FindingsTree, offset=(tree.size.width - 3, y))
+        await settle(app, pilot)
+        assert line_3(course) == "the fixed line"
+        assert len(checker.folders) == 2
+
+    drive(app, steps)
 
 
 def line_3(course):

@@ -59,7 +59,7 @@ In the app, mouse and keyboard both work:
 | The **SHOW** chips, or `1` / `2` / `3` | Show or hide errors, warnings and info (each chip shows how many are open; Birdwatcher remembers the choice, and starts with errors and warnings) |
 | The **FIXED** and **IGNORED** chips | Show or hide fixed and ignored findings (each chip shows how many) |
 | The **FIND** box, or `/` | Show only findings whose file, message or check contains the text, as you type (`F401`, `Lab05`, `lanecc`...); Enter goes back to the list keeping the search, Escape clears it |
-| `f`, or the **FIX** button | Apply the suggested fix to the file, then check again |
+| `f`, the **FIX** button, or a row's **[F] FIX** marker | Apply the suggested fix to the file, then check again (fixable rows end in the marker; long messages end in "…" and show in full in the detail) |
 | `e`, or **View in editor** | For a fixed finding: open the fixed line in VS Code |
 | `w`, or **View on site** | For a fixed finding: open the section the fixed link leads to, on the published site |
 | `u`, or **Undo** | Put the original text back, then check again |

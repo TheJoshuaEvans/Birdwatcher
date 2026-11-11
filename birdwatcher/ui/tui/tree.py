@@ -5,8 +5,11 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
 from dataclasses import dataclass
+from typing import ClassVar
 
+from rich.style import Style
 from rich.text import Text
+from textual.message import Message
 from textual.widgets import Tree
 
 from birdwatcher.ui.tui.grouping import Group
@@ -14,6 +17,8 @@ from birdwatcher.ui.tui.rows import Row
 
 LABEL_WIDTH = 8  # wide enough for "WARNING" and "IGNORED"
 LINE_WIDTH = 5
+FIX_MARKER = "[F] FIX"
+ELLIPSIS = "…"
 
 
 @dataclass(frozen=True)
@@ -30,14 +35,27 @@ class FindingsTree(Tree):
     again (matched by its label and its parents' labels).
 
     Each branch shows its label and how many findings it holds; each row shows
-    its severity (or FIXED or IGNORED), its line and its message. Clicking a
-    branch folds or unfolds it. Clicking a row highlights it; clicking the
-    highlighted row again selects it (Tree.NodeSelected), as Enter does, so a
-    single click never opens anything.
+    its severity (or FIXED or IGNORED), its line and its message. Every line
+    fits the visible width: a long row message ends in "…", and a long branch
+    label starts with "…" (keeping its end and its count). An open row with a
+    fix ends in a FIX_MARKER at the right edge. Clicking a branch folds or
+    unfolds it. Clicking a row highlights it; clicking the highlighted row
+    again selects it (Tree.NodeSelected), as Enter does, so a single click
+    never opens anything. Clicking a fix marker highlights its row and posts
+    FixClicked.
 
     Args:
         id (str | None): The widget's id.
     """
+
+    COMPONENT_CLASSES: ClassVar[set[str]] = Tree.COMPONENT_CLASSES | {"tree--fix"}
+
+    class FixClicked(Message):
+        """A row's fix marker was clicked (the row is now highlighted)."""
+
+        def __init__(self, row):
+            super().__init__()
+            self.row = row
 
     def __init__(self, *, id=None):
         super().__init__("Findings", id=id)
@@ -201,6 +219,49 @@ class FindingsTree(Tree):
         else:
             parent.add_leaf(_row_label(node), data=node)
 
+    def render_label(self, node, base_style, style):
+        label = super().render_label(node, base_style, style)
+        # Room is always left for the vertical scrollbar, which a long list
+        # shows over the last columns of `size`.
+        width = self.size.width - self.styles.scrollbar_size_vertical
+        room = width - self._indent(node)
+        if room <= 0:  # not laid out yet
+            return label
+        if isinstance(node.data, Row):
+            return self._fit_row(label, node.data, room)
+        if label.cell_len > room:
+            # Keep the branch's toggle icon, then the end of its label.
+            icon = label.cell_len - node.label.cell_len
+            keep = max(room - icon - len(ELLIPSIS), 0)
+            label = Text.assemble(
+                label[:icon], ELLIPSIS, label[label.cell_len - keep :]
+            )
+        return label
+
+    def _fit_row(self, label, row, room):
+        """A row's label cut to `room` cells, ending in the fix marker when
+        the row can be fixed."""
+        marker = None
+        if row.is_open and row.finding.fix is not None:
+            style = self.get_component_rich_style("tree--fix", partial=True)
+            marker = Text(f" {FIX_MARKER}", style=style + Style(meta={"fix": True}))
+            room -= marker.cell_len
+        if label.cell_len > room:
+            label.truncate(max(room, 0), overflow="ellipsis")
+        if marker is not None:
+            label.pad_right(room - label.cell_len)
+            label.append_text(marker)
+        return label
+
+    def _indent(self, node):
+        """How many cells of guide lines come before a node's label."""
+        depth = 0
+        parent = node.parent
+        while parent is not None:
+            depth += 1
+            parent = parent.parent
+        return max(0, depth - (0 if self.show_root else 1)) * self.guide_depth
+
     async def _on_click(self, event):
         # Replaces Tree's click handling, which selects on every click. Textual
         # runs the handlers of every class in the hierarchy; prevent_default
@@ -217,6 +278,9 @@ class FindingsTree(Tree):
             if not isinstance(node.data, Row):
                 self.cursor_line = line
                 node.toggle()
+            elif meta.get("fix"):
+                self.cursor_line = line
+                self.post_message(self.FixClicked(node.data))
             elif line == self.cursor_line:
                 self.post_message(Tree.NodeSelected(node))
             else:

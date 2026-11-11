@@ -441,6 +441,9 @@ class FindingsScreen(Screen):
         if isinstance(row, Row):
             self._show_row(row)
 
+    def on_findings_tree_fix_clicked(self, event: FindingsTree.FixClicked):
+        self.action_fix()
+
     def on_tree_node_selected(self, event: Tree.NodeSelected):
         if isinstance(event.node.data, Row):
             self._open(event.node.data)

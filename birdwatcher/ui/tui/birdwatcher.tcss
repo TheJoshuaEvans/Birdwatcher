@@ -100,6 +100,12 @@ Button:hover, Button:focus {
     height: 1fr;
 }
 
+/* The [F] FIX marker at the end of a fixable row */
+FindingsTree > .tree--fix {
+    color: $success;
+    text-style: bold;
+}
+
 /* The watch strip: what is being checked, at the bottom of the findings pane */
 WatchStrip {
     display: none;
