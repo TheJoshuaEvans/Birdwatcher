@@ -59,7 +59,7 @@ class SetupChoice:
 class SetupScreen(Screen):
     """
     The setup page: closes with a SetupChoice once a usable folder is chosen
-    (or with None when cancelled). See BirdwatcherApp for the behaviour as a
+    (or with None when cancelled). See BirdwatcherApp for the behavior as a
     whole.
 
     Args:

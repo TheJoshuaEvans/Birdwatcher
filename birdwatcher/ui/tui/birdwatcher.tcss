@@ -135,7 +135,7 @@ Divider:hover, Divider.-dragging {
     background: $accent 30%;
 }
 
-/* The ignore dialog, centred over the findings */
+/* The ignore dialog, centered over the findings */
 IgnoreDialog {
     align: center middle;
 }

@@ -59,7 +59,7 @@ BUTTON_ACTIONS = {
 class FindingsScreen(Screen):
     """
     The findings view for one course folder; checks it as soon as it opens.
-    See BirdwatcherApp for the behaviour as a whole.
+    See BirdwatcherApp for the behavior as a whole.
 
     Args:
         course_dir (Path): The course folder.

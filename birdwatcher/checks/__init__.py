@@ -30,7 +30,7 @@ ALL_CHECKS = (
         description=(
             "Lab files named for a different lab or group than the folder they are "
             "in, and lab folders that share a number. They are usually copies left "
-            "behind when labs were renumbered or reorganised, and students may "
+            "behind when labs were renumbered or reorganized, and students may "
             "open the wrong one."
         ),
         run=lambda context: numbering.check_numbering(context.root),

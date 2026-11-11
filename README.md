@@ -12,7 +12,17 @@ The course repository already checks that its links resolve, using [lychee](http
 
 **Status:** early development, as the CS 212 Lab 6 project. It grows into the term project: Lab 7 adds analysis by a large language model, and the term project adds simulated students. Downloading, caching, the app and the first check work; the other checks below are being built.
 
-## Setup
+## Running Birdwatcher
+
+With [uv](https://docs.astral.sh/uv/) installed, one command runs Birdwatcher straight from this repository, with nothing to download or install by hand:
+
+```powershell
+uvx --from git+https://github.com/TheJoshuaEvans/Birdwatcher birdwatcher
+```
+
+Add `@` and a tag, branch or commit to run that version instead of the latest, for example `...Birdwatcher@main` or `...Birdwatcher@d4e11d8`. Anything after `birdwatcher` is passed on, so `... birdwatcher check --list-checks` works too. To keep it installed as a `birdwatcher` command, use `uv tool install git+https://github.com/TheJoshuaEvans/Birdwatcher`.
+
+## Setup for development
 
 Requires [uv](https://docs.astral.sh/uv/), which installs Python 3.12 itself.
 
