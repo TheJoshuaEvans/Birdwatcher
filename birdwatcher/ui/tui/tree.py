@@ -19,6 +19,7 @@ LABEL_WIDTH = 8  # wide enough for "WARNING" and "IGNORED"
 LINE_WIDTH = 5
 FIX_MARKER = "[F] FIX"
 ELLIPSIS = "…"
+EDGE_GAP = 1  # blank cells between a line's end and the scrollbar
 
 
 @dataclass(frozen=True)
@@ -36,13 +37,15 @@ class FindingsTree(Tree):
 
     Each branch shows its label and how many findings it holds; each row shows
     its severity (or FIXED or IGNORED), its line and its message. Every line
-    fits the visible width: a long row message ends in "…", and a long branch
-    label starts with "…" (keeping its end and its count). An open row with a
-    fix ends in a FIX_MARKER at the right edge. Clicking a branch folds or
-    unfolds it. Clicking a row highlights it; clicking the highlighted row
-    again selects it (Tree.NodeSelected), as Enter does, so a single click
-    never opens anything. Clicking a fix marker highlights its row and posts
-    FixClicked.
+    fits the visible width, ending one blank cell before the scrollbar: a long
+    row message ends in "…", and a long branch label starts with "…" (keeping
+    its end and its count). An open row with a fix ends in a FIX_MARKER at the
+    right edge, and a branch holding two or more ends in FIX_MARKER and how
+    many.
+    Clicking a branch folds or unfolds it. Clicking a row highlights it;
+    clicking the highlighted row again selects it (Tree.NodeSelected), as
+    Enter does, so a single click never opens anything. Clicking a fix marker
+    (of a row or a branch) highlights it and posts FixClicked instead.
 
     Args:
         id (str | None): The widget's id.
@@ -51,11 +54,12 @@ class FindingsTree(Tree):
     COMPONENT_CLASSES: ClassVar[set[str]] = Tree.COMPONENT_CLASSES | {"tree--fix"}
 
     class FixClicked(Message):
-        """A row's fix marker was clicked (the row is now highlighted)."""
+        """A fix marker was clicked; its row or branch (`node`) is now
+        highlighted."""
 
-        def __init__(self, row):
+        def __init__(self, node):
             super().__init__()
-            self.row = row
+            self.node = node
 
     def __init__(self, *, id=None):
         super().__init__("Findings", id=id)
@@ -67,10 +71,11 @@ class FindingsTree(Tree):
 
         Args:
             nodes (Sequence[Group | Row]): The top-level branches and rows.
-            keep (tuple | None): The key (Row.key) of the row to put the
-                cursor on. When that row is gone (or None), the cursor goes to
-                the row at the same position as the previous cursor row, or the
-                last row if there are fewer now.
+            keep (tuple | BranchKey | None): The key (Row.key) of the row,
+                or the BranchKey of the branch, to put the cursor on. When it
+                is gone (or None), the cursor goes to the row at the same
+                position as the previous cursor row, or the last row if there
+                are fewer now.
         """
         before = self.row_nodes()
         position = before.index(self.cursor_node) if self.cursor_node in before else 0
@@ -79,11 +84,16 @@ class FindingsTree(Tree):
         for node in nodes:
             self._add(self.root, node, (), folded)
         rows = self.row_nodes()
-        if not rows:
-            return
         # Node line numbers are computed lazily; asking for the last line makes
         # the tree compute them, so move_cursor below finds the node's line.
         _ = self.last_line
+        if isinstance(keep, BranchKey):
+            branch = next((n for n in self._branch_nodes() if n.data == keep), None)
+            if branch is not None and self._is_showing(branch):
+                self.move_cursor(branch)
+                return
+        if not rows:
+            return
         target = next((n for n in rows if n.data.key == keep), None)
         self.move_cursor(target or rows[min(position, len(rows) - 1)])
 
@@ -104,6 +114,39 @@ class FindingsTree(Tree):
                     walk(child)
 
         walk(self.root)
+        return found
+
+    def current_branch(self):
+        """
+        The branch under the cursor.
+
+        Returns:
+            TreeNode | None: None when the cursor is on a row or nowhere.
+        """
+        node = self.cursor_node
+        return node if node is not None and isinstance(node.data, BranchKey) else None
+
+    @staticmethod
+    def rows_under(node):
+        """
+        Every row inside a branch, folded or not.
+
+        Args:
+            node (TreeNode): A branch node.
+
+        Returns:
+            list[Row]: In display order.
+        """
+        found = []
+
+        def walk(parent):
+            for child in parent.children:
+                if isinstance(child.data, Row):
+                    found.append(child.data)
+                else:
+                    walk(child)
+
+        walk(node)
         return found
 
     def current_row(self):
@@ -222,32 +265,37 @@ class FindingsTree(Tree):
     def render_label(self, node, base_style, style):
         label = super().render_label(node, base_style, style)
         # Room is always left for the vertical scrollbar, which a long list
-        # shows over the last columns of `size`.
-        width = self.size.width - self.styles.scrollbar_size_vertical
+        # shows over the last columns of `size`, and a blank cell before it.
+        width = self.size.width - self.styles.scrollbar_size_vertical - EDGE_GAP
         room = width - self._indent(node)
         if room <= 0:  # not laid out yet
             return label
         if isinstance(node.data, Row):
-            return self._fit_row(label, node.data, room)
-        if label.cell_len > room:
-            # Keep the branch's toggle icon, then the end of its label.
-            icon = label.cell_len - node.label.cell_len
-            keep = max(room - icon - len(ELLIPSIS), 0)
-            label = Text.assemble(
-                label[:icon], ELLIPSIS, label[label.cell_len - keep :]
+            row = node.data
+            fixable = row.is_open and row.finding.fix is not None
+            marker = FIX_MARKER if fixable else None
+        else:
+            count = sum(
+                1
+                for row in self.rows_under(node)
+                if row.is_open and row.finding.fix is not None
             )
-        return label
-
-    def _fit_row(self, label, row, room):
-        """A row's label cut to `room` cells, ending in the fix marker when
-        the row can be fixed."""
-        marker = None
-        if row.is_open and row.finding.fix is not None:
+            # One fix would only repeat the marker of the row it is on.
+            marker = f"{FIX_MARKER} {count}" if count > 1 else None
+        if marker is not None:
             style = self.get_component_rich_style("tree--fix", partial=True)
-            marker = Text(f" {FIX_MARKER}", style=style + Style(meta={"fix": True}))
+            marker = Text(f" {marker}", style=style + Style(meta={"fix": True}))
             room -= marker.cell_len
         if label.cell_len > room:
-            label.truncate(max(room, 0), overflow="ellipsis")
+            if isinstance(node.data, Row):
+                label.truncate(max(room, 0), overflow="ellipsis")
+            else:
+                # Keep the branch's toggle icon, then the end of its label.
+                icon = label.cell_len - node.label.cell_len
+                keep = max(room - icon - len(ELLIPSIS), 0)
+                label = Text.assemble(
+                    label[:icon], ELLIPSIS, label[label.cell_len - keep :]
+                )
         if marker is not None:
             label.pad_right(room - label.cell_len)
             label.append_text(marker)
@@ -275,12 +323,12 @@ class FindingsTree(Tree):
             node = self.get_node_at_line(line)
             if node is None:
                 return
-            if not isinstance(node.data, Row):
+            if meta.get("fix"):
+                self.cursor_line = line
+                self.post_message(self.FixClicked(node))
+            elif not isinstance(node.data, Row):
                 self.cursor_line = line
                 node.toggle()
-            elif meta.get("fix"):
-                self.cursor_line = line
-                self.post_message(self.FixClicked(node.data))
             elif line == self.cursor_line:
                 self.post_message(Tree.NodeSelected(node))
             else:

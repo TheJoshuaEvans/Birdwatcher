@@ -32,6 +32,7 @@ from birdwatcher.core.run import CheckResult, RunResult
 from birdwatcher.ui.system import Editor
 from birdwatcher.ui.tui.app import BirdwatcherApp
 from birdwatcher.ui.tui.divider import Divider
+from birdwatcher.ui.tui.fix_all import FixAllDialog
 from birdwatcher.ui.tui.tree import FindingsTree
 
 CHECK = Check(
@@ -1416,9 +1417,74 @@ def test_a_fixable_row_ends_in_a_fix_marker_at_the_pane_edge(tmp_path):
 
 
 def usable_width(app):
-    """The tree's width less its vertical scrollbar's, shown or not."""
+    """The tree's width less its vertical scrollbar's (shown or not) and the
+    one blank cell kept before it."""
     tree = app.screen.query_one(FindingsTree)
-    return tree.size.width - tree.styles.scrollbar_size_vertical
+    return tree.size.width - tree.styles.scrollbar_size_vertical - 1
+
+
+def drawn_node(app, node):
+    """(indent, label) for any showing node, as the tree draws it."""
+    tree = app.screen.query_one(FindingsTree)
+    depth = 0
+    parent = node.parent
+    while parent is not None:
+        depth += 1
+        parent = parent.parent
+    return max(0, depth - 1) * tree.guide_depth, tree.render_label(
+        node, Style(), Style()
+    )
+
+
+def test_a_branch_with_fixable_findings_ends_in_a_fix_all_marker(tmp_path):
+    course = make_course(tmp_path / "course")
+    checker = FakeChecker([FIXABLE, OTHER_FIXABLE, SECOND])
+    app, _ = make_app(tmp_path, checker, course)
+
+    async def steps(app, pilot):
+        tree = app.screen.query_one(FindingsTree)
+        check_branch = tree.root.children[0]
+        indent, label = drawn_node(app, check_branch)
+        assert label.plain.endswith("[F] FIX 2")
+        assert "Broken section links" in label.plain
+        assert indent + label.cell_len == usable_width(app)
+        # docs/B.md holds one fix, the same as its row's marker: none here
+        b_file = check_branch.children[1]
+        assert "[F]" not in drawn_node(app, b_file)[1].plain
+
+    drive(app, steps)
+
+
+def test_a_branch_with_nothing_fixable_has_no_marker(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
+
+    async def steps(app, pilot):
+        branch = app.screen.query_one(FindingsTree).root.children[0]
+        assert "[F]" not in drawn_node(app, branch)[1].plain
+
+    drive(app, steps)
+
+
+def test_clicking_a_branch_marker_asks_to_fix_that_branch(tmp_path):
+    course = make_course(tmp_path / "course")
+    checker = FakeChecker([FIXABLE, OTHER_FIXABLE, SECOND])
+    app, _ = make_app(tmp_path, checker, course)
+
+    async def steps(app, pilot):
+        tree = app.screen.query_one(FindingsTree)
+        check_branch = tree.root.children[0]
+        y = check_branch.line - tree.scroll_offset.y
+        await pilot.click(FindingsTree, offset=(usable_width(app) - 2, y))
+        await settle(app, pilot)
+        assert isinstance(app.screen, FixAllDialog)
+        text = render_text(app.screen.query_one("#fix-all-text", Static).content)
+        assert "Broken section links" in text
+        assert "2 fixes will change 2 lines in 2 files" in text
+        await press(app, pilot, "escape")
+        assert check_branch.is_expanded  # the click asked; it did not fold
+
+    drive(app, steps)
 
 
 def test_fix_markers_stay_clear_of_the_scrollbar_in_a_long_list(tmp_path):
@@ -1461,10 +1527,127 @@ def test_clicking_a_fix_marker_fixes_that_finding(tmp_path):
         node = next(n for n in leaves(app) if n.data.finding == FIXABLE)
         assert tree.cursor_node is not node
         y = node.line - tree.scroll_offset.y
-        await pilot.click(FindingsTree, offset=(tree.size.width - 3, y))
+        await pilot.click(FindingsTree, offset=(usable_width(app) - 2, y))
         await settle(app, pilot)
         assert line_3(course) == "the fixed line"
         assert len(checker.folders) == 2
+
+    drive(app, steps)
+
+
+OTHER_FIXABLE = replace(
+    FIXABLE, path="docs/B.md", line=2, message="Other.", fix=Fix(2, "beta", "gamma")
+)
+STALE_FIXABLE = replace(FIXABLE, line=1, message="Stale.", fix=Fix(1, "gone", "x"))
+
+
+async def on_check_branch(app, pilot):
+    """Put the cursor on the (only) check branch."""
+    tree = app.screen.query_one(FindingsTree)
+    tree.move_cursor(tree.root.children[0])
+    await settle(app, pilot)
+
+
+def test_a_highlighted_branch_summarizes_its_findings(tmp_path):
+    course = make_course(tmp_path / "course")
+    checker = FakeChecker([FIXABLE, OTHER_FIXABLE, SECOND])
+    app, _ = make_app(tmp_path, checker, course)
+
+    async def steps(app, pilot):
+        await on_check_branch(app, pilot)
+        text = panel_text(app)
+        assert "Broken section links" in text
+        assert "3 findings here" in text
+        assert "2 can be fixed, in 2 files" in text
+        assert is_visible(app, "#fix")
+        assert "FIX ALL 2" in str(app.screen.query_one("#fix", Button).label)
+
+    drive(app, steps)
+
+
+def test_a_branch_with_nothing_to_fix_offers_no_fix(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
+
+    async def steps(app, pilot):
+        await on_check_branch(app, pilot)
+        assert "nothing here can be fixed" in panel_text(app).lower()
+        assert not is_visible(app, "#fix")
+        assert not app.screen.check_action("fix", ())
+
+    drive(app, steps)
+
+
+def test_fix_all_asks_first_and_cancel_changes_nothing(tmp_path):
+    course = make_course(tmp_path / "course")
+    checker = FakeChecker([FIXABLE, OTHER_FIXABLE])
+    app, _ = make_app(tmp_path, checker, course)
+
+    async def steps(app, pilot):
+        await on_check_branch(app, pilot)
+        await press(app, pilot, "f")
+        text = render_text(app.screen.query_one("#fix-all-text", Static).content)
+        assert "Broken section links" in text
+        assert "2 fixes will change 2 lines in 2 files" in text
+        await press(app, pilot, "escape")
+        assert line_3(course) == "the broken line"
+        assert len(checker.folders) == 1
+
+    drive(app, steps)
+
+
+@pytest.mark.parametrize("how", ["enter", "button"])
+def test_fix_all_fixes_every_fixable_finding_then_checks_once(tmp_path, how):
+    course = make_course(tmp_path / "course")
+    checker = FakeChecker([FIXABLE, OTHER_FIXABLE, SECOND], [SECOND])
+    app, config_path = make_app(tmp_path, checker, course)
+
+    async def steps(app, pilot):
+        await on_check_branch(app, pilot)
+        await press(app, pilot, "f")
+        if how == "enter":
+            await press(app, pilot, "enter")
+        else:
+            await pilot.click("#confirm-fix-all")
+            await settle(app, pilot)
+        assert line_3(course) == "the fixed line"
+        b_md = (course / "docs" / "B.md").read_text(encoding="utf-8")
+        assert b_md.split("\n")[1] == "gamma line"
+        assert len(checker.folders) == 2  # one re-check for the whole batch
+        logged = {entry.finding for entry in fix_log(config_path, course)}
+        assert logged == {FIXABLE, OTHER_FIXABLE}
+        cursor = app.screen.query_one(FindingsTree).cursor_node
+        assert str(cursor.label).startswith("Broken section links")
+
+    drive(app, steps)
+
+
+def test_fixes_that_fail_are_skipped_and_reported(tmp_path):
+    course = make_course(tmp_path / "course")
+    checker = FakeChecker([FIXABLE, STALE_FIXABLE], [STALE_FIXABLE])
+    app, config_path = make_app(tmp_path, checker, course)
+
+    async def steps(app, pilot):
+        await on_check_branch(app, pilot)
+        await press(app, pilot, "f", "enter")
+        assert line_3(course) == "the fixed line"
+        assert [e.finding for e in fix_log(config_path, course)] == [FIXABLE]
+        text = panel_text(app)
+        assert "Fixed 1 of 2" in text
+        assert "docs/A.md" in text and "line 1" in text
+        assert "gone" in text  # the reason: the line no longer holds it
+
+    drive(app, steps)
+
+
+def test_a_rebuild_keeps_the_cursor_on_its_branch(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
+
+    async def steps(app, pilot):
+        await on_check_branch(app, pilot)
+        await press(app, pilot, "r")
+        assert cursor_label(app).startswith("Broken section links")
 
     drive(app, steps)
 

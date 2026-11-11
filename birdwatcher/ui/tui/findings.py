@@ -36,12 +36,13 @@ from birdwatcher.core.fixes import FixError, apply_fix, undo_fix
 from birdwatcher.core.ignores import ignore_finding, load_ignores, save_ignores
 from birdwatcher.core.run import CheckFinished, CheckProgress, CheckStarted, RunResult
 from birdwatcher.ui.tui.divider import Divider
+from birdwatcher.ui.tui.fix_all import FixAllDialog
 from birdwatcher.ui.tui.grouping import Grouping, group_rows
 from birdwatcher.ui.tui.ignore import IgnoreDialog
 from birdwatcher.ui.tui.retro import StatusChip
 from birdwatcher.ui.tui.rows import Row, row_order
 from birdwatcher.ui.tui.search import SearchBox
-from birdwatcher.ui.tui.tree import FindingsTree
+from birdwatcher.ui.tui.tree import BranchKey, FindingsTree
 from birdwatcher.ui.tui.watch import WatchStrip
 
 CONTEXT_LINES = 6  # source lines shown above and below a finding
@@ -157,7 +158,9 @@ class FindingsScreen(Screen):
         self._fixed = []
         self._ignores = []
         self._grouping = Grouping.CHECK
-        self._next_cursor = None  # a Row.key the next redraw puts the cursor on
+        # A Row.key or BranchKey the next redraw puts the cursor on
+        self._next_cursor = None
+        self._batch_report = None  # (BranchKey, Text): the last fix-all's outcome
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -413,7 +416,10 @@ class FindingsScreen(Screen):
 
         tree = self.query_one(FindingsTree)
         current = tree.current_row()
-        keep = self._next_cursor or (None if current is None else current.key)
+        branch = tree.current_branch()
+        keep = self._next_cursor or (
+            current.key if current is not None else branch and branch.data
+        )
         self._next_cursor = None
         titles = {result.check.id: result.check.title for result in self._run.results}
         tree.show(
@@ -431,7 +437,10 @@ class FindingsScreen(Screen):
             self._show_row(None)
             self._detail().update(NO_FINDINGS if not open_rows else ALL_HIDDEN)
             return
-        self._show_row(tree.current_row())
+        if tree.current_branch() is not None:
+            self._show_branch(tree.current_branch())
+        else:
+            self._show_row(tree.current_row())
 
     def _current(self):
         return self.query_one(FindingsTree).current_row()
@@ -440,6 +449,8 @@ class FindingsScreen(Screen):
         row = event.node.data
         if isinstance(row, Row):
             self._show_row(row)
+        elif isinstance(row, BranchKey):
+            self._show_branch(event.node)
 
     def on_findings_tree_fix_clicked(self, event: FindingsTree.FixClicked):
         self.action_fix()
@@ -540,6 +551,7 @@ class FindingsScreen(Screen):
         if row.is_open and fix is not None:
             summary.update(_change("Suggested fix (f):", fix))
             summary.display = True
+            buttons["fix"].label = Content("[F] FIX")
             buttons["fix"].display = True
         elif row.fixed is not None:
             summary.update(self._fixed_summary(row))
@@ -634,7 +646,9 @@ class FindingsScreen(Screen):
         row = self._current() if self.is_mounted else None
         is_fixed = row is not None and row.fixed is not None
         if action == "fix":
-            return row is not None and row.is_open and row.finding.fix is not None
+            if row is None:
+                return bool(self._fixable_in_branch()) if self.is_mounted else False
+            return row.is_open and row.finding.fix is not None
         if action in ("view_editor", "undo", "clear"):
             return is_fixed
         if action == "view_site":
@@ -717,6 +731,9 @@ class FindingsScreen(Screen):
             self.notify(f"Could not open the editor: {error}", severity="error")
 
     def action_fix(self):
+        if self._current() is None and self._fixable_in_branch():
+            self._ask_to_fix_branch()
+            return
         row = self._current()
         if row is None or not row.is_open or row.finding.fix is None:
             return
@@ -730,6 +747,96 @@ class FindingsScreen(Screen):
         self._save_fixed()
         self._next_cursor = Row(row.finding, fixed).key  # land on the outcome
         self._start_checking()
+
+    def _fixable_in_branch(self):
+        """The findings the branch under the cursor can fix (empty off a branch)."""
+        branch = self.query_one(FindingsTree).current_branch()
+        if branch is None:
+            return []
+        return [
+            row.finding
+            for row in FindingsTree.rows_under(branch)
+            if row.is_open and row.finding.fix is not None
+        ]
+
+    def _ask_to_fix_branch(self):
+        branch = self.query_one(FindingsTree).current_branch()
+        findings = self._fixable_in_branch()
+
+        def answered(confirmed):
+            if confirmed:
+                self._fix_all(branch.data, findings)
+
+        self.app.push_screen(FixAllDialog(branch.data.labels[-1], findings), answered)
+
+    def _fix_all(self, branch_key, findings):
+        """Apply each finding's fix, skipping the ones that fail, then check
+        once; the outcome shows on the branch and in a notification."""
+        failures = []
+        for finding in findings:
+            try:
+                apply_fix(self.course_dir / finding.path, finding.fix)
+            except FixError as error:
+                failures.append((finding, error))
+                continue
+            self._fixed.append(FixedFinding(finding, datetime.now(UTC)))
+        self._save_fixed()
+        done = len(findings) - len(failures)
+        outcome = f"Fixed {done} of {len(findings)}."
+        report = Text(outcome, style="bold")
+        if failures:
+            report.append(f" {len(failures)} could not be fixed:\n", style="bold")
+            for finding, error in failures:
+                report.append(
+                    f"\n{finding.path}  line {finding.fix.line}\n", style="underline"
+                )
+                report.append(f"{error}\n")
+            outcome += f" {len(failures)} could not be fixed; see the detail."
+        self._batch_report = (branch_key, report)
+        self.notify(outcome, severity="warning" if failures else "information")
+        self._next_cursor = branch_key
+        self._start_checking()
+
+    def _show_branch(self, node):
+        """Fill the detail panel with a summary of a branch's open findings."""
+        for name in BUTTON_ACTIONS:
+            self.query_one(f"#{name}", Button).display = False
+        self.query_one("#fix-summary", Static).display = False
+        self._show_excerpt(None)
+        rows = [row for row in FindingsTree.rows_under(node) if row.is_open]
+        fixable = [row.finding for row in rows if row.finding.fix is not None]
+        text = Text()
+        text.append(" GROUP ", style="reverse bold")
+        text.append(f"  {node.data.labels[-1]}\n\n", style="bold")
+        counts = []
+        for severity in Severity:
+            count = sum(1 for row in rows if row.finding.severity == severity)
+            if count:
+                plural = "" if count == 1 or severity == Severity.INFO else "s"
+                counts.append(f"{count} {severity.value}{plural}")
+        text.append(f"{len(rows)} {'finding' if len(rows) == 1 else 'findings'} here")
+        text.append(f": {', '.join(counts)}.\n" if counts else ".\n")
+        titles = [self._check_title(row.finding) for row in rows]
+        if len(set(titles)) > 1:
+            by_check = ", ".join(
+                f"{title} {titles.count(title)}" for title in dict.fromkeys(titles)
+            )
+            text.append(f"By check: {by_check}\n")
+        if fixable:
+            files = len({finding.path for finding in fixable})
+            noun = "file" if files == 1 else "files"
+            text.append(f"{len(fixable)} can be fixed, in {files} {noun}.\n")
+        else:
+            text.append("Nothing here can be fixed automatically.\n")
+        if self._batch_report is not None and self._batch_report[0] == node.data:
+            text.append("\n")
+            text.append_text(self._batch_report[1])
+        self._detail().update(text)
+        fix_button = self.query_one("#fix", Button)
+        fix_button.label = Content(f"[F] FIX ALL {len(fixable)}")
+        fix_button.display = bool(fixable)
+        self.query_one("#actions").display = bool(fixable)
+        self.refresh_bindings()
 
     def action_undo(self):
         row = self._current()
