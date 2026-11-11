@@ -81,18 +81,6 @@ def test_an_unknown_check_is_labelled_with_its_id_after_the_others():
     assert [node.label for node in tree] == ["Broken section links", "zzz"]
 
 
-def test_by_severity_orders_errors_first_and_fixed_and_ignored_last():
-    tree = group(rows(IGNORED, FIXED, SHARED_X, LINK_B, MISPLACED), Grouping.SEVERITY)
-    assert [(node.label, node.count) for node in tree] == [
-        ("ERROR", 1),
-        ("WARNING", 1),
-        ("INFO", 1),
-        ("FIXED", 1),
-        ("IGNORED", 1),
-    ]
-    assert shape(tree)[0] == ("ERROR", 1, [("docs/LectureNotes/B.md", 1, ["b"])])
-
-
 def test_by_folder_nests_folders_and_merges_single_folder_chains():
     tree = group(rows(LINK_A, LINK_B), Grouping.FOLDER)
     assert shape(tree) == [

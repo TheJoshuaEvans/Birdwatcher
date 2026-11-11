@@ -60,10 +60,20 @@ Button:hover, Button:focus {
     text-style: bold;
 }
 
-/* Status chips: [X] FIXED 3   [ ] IGNORED 1 */
+/* Chips: SHOW [X] ERROR 16  [X] WARNING 58  [ ] INFO 214, then FIXED and IGNORED */
 #chips {
     height: auto;
     margin: 0 1;
+}
+
+.chip-row {
+    height: auto;
+}
+
+.chip-label {
+    width: 5;
+    text-style: bold;
+    color: $accent;
 }
 
 #chips StatusChip {

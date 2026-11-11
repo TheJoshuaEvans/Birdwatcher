@@ -11,6 +11,7 @@ import pytest
 
 from birdwatcher.core.config import (
     DEFAULT_EDITOR,
+    DEFAULT_SHOWN_SEVERITIES,
     DEFAULT_SPLIT,
     RECENT_LIMIT,
     THEME_AUTO,
@@ -20,6 +21,7 @@ from birdwatcher.core.config import (
     save_config,
     with_course,
 )
+from birdwatcher.core.findings import Severity
 
 
 def test_saved_settings_load_back(tmp_path):
@@ -133,6 +135,36 @@ def test_a_split_that_is_not_a_sensible_percentage_is_the_default(tmp_path, stor
     path = tmp_path / "config.json"
     path.write_text(f'{{"course_dir": "a", "split": {stored}}}', encoding="utf-8")
     assert load_config(path).split == DEFAULT_SPLIT
+
+
+def test_shown_severities_load_back_and_default_to_errors_and_warnings(tmp_path):
+    path = tmp_path / "config.json"
+    assert Config(course_dir=Path("a")).shown_severities == {
+        Severity.ERROR,
+        Severity.WARNING,
+    }
+    save_config(path, Config(course_dir=Path("a"), shown_severities={Severity.INFO}))
+    assert load_config(path).shown_severities == {Severity.INFO}
+    save_config(path, Config(course_dir=Path("a"), shown_severities=frozenset()))
+    assert load_config(path).shown_severities == frozenset()
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        ('"error"', DEFAULT_SHOWN_SEVERITIES),
+        ("3", DEFAULT_SHOWN_SEVERITIES),
+        ('["info", "loud", 7]', {Severity.INFO}),
+        ('["warning", {}, []]', {Severity.WARNING}),
+    ],
+    ids=["not-a-list", "number", "unknown-names", "not-names"],
+)
+def test_unreadable_shown_severities_fall_back(tmp_path, stored, expected):
+    path = tmp_path / "config.json"
+    path.write_text(
+        f'{{"course_dir": "a", "shown_severities": {stored}}}', encoding="utf-8"
+    )
+    assert load_config(path).shown_severities == expected
 
 
 def test_default_path_is_a_json_file_named_for_birdwatcher():

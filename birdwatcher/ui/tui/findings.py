@@ -30,6 +30,7 @@ from textual.widgets import (
 )
 
 from birdwatcher.core.config import DEFAULT_SPLIT, SPLIT_RANGE
+from birdwatcher.core.findings import Severity
 from birdwatcher.core.fix_log import FixedFinding, load_fixed, save_fixed
 from birdwatcher.core.fixes import FixError, apply_fix, undo_fix
 from birdwatcher.core.ignores import ignore_finding, load_ignores, save_ignores
@@ -45,6 +46,8 @@ from birdwatcher.ui.tui.watch import WatchStrip
 CONTEXT_LINES = 6  # source lines shown above and below a finding
 MIN_PANE_WIDTH = 20  # columns each side keeps when the divider is dragged
 NO_FINDINGS = "No findings. Every check came back clean: all quiet in the canopy."
+ALL_HIDDEN = "Every finding is hidden by the SHOW chips above."
+SEVERITY_CHIP_PREFIX = "show-"  # the severity chips' ids: show-error, show-warning...
 TAB_PREFIX = "by-"  # grouping tab ids: by-check, by-severity, by-folder
 NARROW_WIDTH = 120  # below this many columns, one pane at a time
 NARROW_CLASS, ZOOMED_CLASS = "-narrow", "-zoomed"  # layout states, styled in tcss
@@ -82,6 +85,10 @@ class FindingsScreen(Screen):
             side by side, in percent.
         save_split (Callable[[int], object]): Remembers a split the user
             dragged, in percent.
+        shown_severities (Set[Severity]): The severities the list starts
+            showing; the SHOW chips (or keys 1, 2, 3) change them.
+        save_severities (Callable[[frozenset[Severity]], object]): Remembers
+            the shown severities whenever they change.
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -104,6 +111,9 @@ class FindingsScreen(Screen):
         Binding("x", "stop", "Stop checking"),
         Binding("s", "app.open_setup", "Setup"),
         Binding("q", "app.quit", "Quit"),
+        Binding("1", "toggle_severity('error')", "Errors", show=False),
+        Binding("2", "toggle_severity('warning')", "Warnings", show=False),
+        Binding("3", "toggle_severity('info')", "Info", show=False),
     ]
 
     def __init__(
@@ -117,8 +127,12 @@ class FindingsScreen(Screen):
         ignore_path,
         split=DEFAULT_SPLIT,
         save_split=None,
+        shown_severities=frozenset(Severity),
+        save_severities=None,
     ):
         super().__init__()
+        self._shown_severities = frozenset(shown_severities)
+        self._save_severities = save_severities or (lambda severities: None)
         self._split = split
         self._save_split = save_split or (lambda percent: None)
         self._zoomed = False
@@ -151,9 +165,19 @@ class FindingsScreen(Screen):
                     ),
                     id="grouping",
                 )
-                with Horizontal(id="chips"):
-                    yield StatusChip("FIXED 0", value=True, id="show-fixed")
-                    yield StatusChip("IGNORED 0", value=False, id="show-ignored")
+                with Vertical(id="chips"):
+                    with Horizontal(classes="chip-row"):
+                        yield Static("SHOW", classes="chip-label")
+                        for severity in Severity:
+                            yield StatusChip(
+                                f"{severity.value.upper()} 0",
+                                value=severity in self._shown_severities,
+                                id=f"{SEVERITY_CHIP_PREFIX}{severity.value}",
+                            )
+                    with Horizontal(classes="chip-row"):
+                        yield Static("", classes="chip-label")
+                        yield StatusChip("FIXED 0", value=True, id="show-fixed")
+                        yield StatusChip("IGNORED 0", value=False, id="show-ignored")
                 yield FindingsTree(id="findings")
                 yield WatchStrip(id="watch")
             yield Divider("#findings-pane", min_width=MIN_PANE_WIDTH)
@@ -351,16 +375,25 @@ class FindingsScreen(Screen):
         show_ignored = self.query_one("#show-ignored", Checkbox)
         show_fixed.label = f"FIXED {len(fixed_rows)}"
         show_ignored.label = f"IGNORED {len(ignored_rows)}"
-        shown = (
-            open_rows
-            + (fixed_rows if show_fixed.value else [])
-            + (ignored_rows if show_ignored.value else [])
-        )
+        for severity in Severity:
+            count = sum(1 for row in open_rows if row.finding.severity == severity)
+            self._severity_chip(severity).label = f"{severity.value.upper()} {count}"
+        shown = [
+            row
+            for row in (
+                open_rows
+                + (fixed_rows if show_fixed.value else [])
+                + (ignored_rows if show_ignored.value else [])
+            )
+            if row.finding.severity in self._shown_severities
+        ]
 
         count = len(open_rows)
-        subtitle = (
-            f"{self.course_dir}  ·  {count} {'finding' if count == 1 else 'findings'}"
-        )
+        showing = sum(1 for row in shown if row.is_open)
+        found = f"{count} {'finding' if count == 1 else 'findings'}"
+        if showing != count:
+            found = f"{showing} of {found}"
+        subtitle = f"{self.course_dir}  ·  {found}"
         if fixed_rows:
             subtitle += f"  ·  {len(fixed_rows)} fixed"
         if ignored_rows:
@@ -386,7 +419,7 @@ class FindingsScreen(Screen):
         tree.focus()
         if not shown:
             self._show_row(None)
-            self._detail().update(NO_FINDINGS)
+            self._detail().update(NO_FINDINGS if not open_rows else ALL_HIDDEN)
             return
         self._show_row(tree.current_row())
 
@@ -408,8 +441,20 @@ class FindingsScreen(Screen):
             self._show_rows()
 
     def on_checkbox_changed(self, event: Checkbox.Changed):
+        severity_ids = {f"{SEVERITY_CHIP_PREFIX}{s.value}" for s in Severity}
+        if event.checkbox.id in severity_ids:
+            self._shown_severities = frozenset(
+                severity for severity in Severity if self._severity_chip(severity).value
+            )
+            self._save_severities(self._shown_severities)
         if self._run is not None:
             self._show_rows()
+
+    def _severity_chip(self, severity):
+        return self.query_one(f"#{SEVERITY_CHIP_PREFIX}{severity.value}", Checkbox)
+
+    def action_toggle_severity(self, name):
+        self._severity_chip(Severity(name)).toggle()
 
     def action_next_grouping(self):
         groupings = list(Grouping)

@@ -10,6 +10,8 @@ from pathlib import Path
 
 from platformdirs import user_config_dir
 
+from birdwatcher.core.findings import Severity
+
 CONFIG_FILE = "config.json"
 COURSE_DIR_KEY = "course_dir"
 EDITOR_KEY = "editor"
@@ -18,6 +20,9 @@ DEFAULT_EDITOR = "vscode"
 THEME_KEY = "theme"
 THEME_AUTO = "auto"  # follow the system's light or dark mode
 SPLIT_KEY = "split"
+SHOWN_SEVERITIES_KEY = "shown_severities"
+# Which severities the findings list shows until the user chooses
+DEFAULT_SHOWN_SEVERITIES = frozenset({Severity.ERROR, Severity.WARNING})
 DEFAULT_SPLIT = 50  # percent of the window's width for the findings pane
 SPLIT_RANGE = range(10, 91)  # sensible splits, in percent
 RECENT_LIMIT = 5  # course folders remembered for quick switching
@@ -38,6 +43,8 @@ class Config:
             system's light or dark mode.
         split (int): How much of the window's width the findings pane takes
             when the panes are side by side, in percent (10 to 90).
+        shown_severities (frozenset[Severity]): The severities the findings
+            list shows (it may be empty).
     """
 
     course_dir: Path
@@ -45,6 +52,7 @@ class Config:
     recent: tuple[Path, ...] = ()
     theme: str = THEME_AUTO
     split: int = DEFAULT_SPLIT
+    shown_severities: frozenset[Severity] = DEFAULT_SHOWN_SEVERITIES
 
 
 def with_course(config, course_dir):
@@ -89,7 +97,9 @@ def load_config(path):
             has no readable course folder (it is then treated as not set up).
             A missing or unreadable editor is DEFAULT_EDITOR, a missing or
             unreadable theme is THEME_AUTO, and a split that is not a whole
-            number from 10 to 90 is DEFAULT_SPLIT; unreadable
+            number from 10 to 90 is DEFAULT_SPLIT; shown severities that are
+            not a list are DEFAULT_SHOWN_SEVERITIES, and unknown names in the
+            list are left out; unreadable
             recent entries are left out, and a file from before the recent
             list existed (no "recent" key) gets one holding just the course
             folder.
@@ -118,6 +128,17 @@ def load_config(path):
         recent=recent,
         theme=theme if isinstance(theme, str) else THEME_AUTO,
         split=split if sensible and split in SPLIT_RANGE else DEFAULT_SPLIT,
+        shown_severities=_severities(data.get(SHOWN_SEVERITIES_KEY)),
+    )
+
+
+def _severities(stored):
+    """The shown severities from their saved names."""
+    if not isinstance(stored, list):
+        return DEFAULT_SHOWN_SEVERITIES
+    known = {severity.value: severity for severity in Severity}
+    return frozenset(
+        known[name] for name in stored if isinstance(name, str) and name in known
     )
 
 
@@ -138,5 +159,8 @@ def save_config(path, config):
         RECENT_KEY: [str(folder) for folder in config.recent],
         THEME_KEY: config.theme,
         SPLIT_KEY: config.split,
+        SHOWN_SEVERITIES_KEY: sorted(
+            severity.value for severity in config.shown_severities
+        ),
     }
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

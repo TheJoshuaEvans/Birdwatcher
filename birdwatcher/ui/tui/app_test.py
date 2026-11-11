@@ -117,13 +117,18 @@ def make_app(
     shown=None,
     editors=None,
     dark=True,
+    severities=frozenset(Severity),
 ):
     """An app whose config names `course` (no config when course is None);
-    `dark` is what the system's light or dark mode reports."""
+    `dark` is what the system's light or dark mode reports; `severities` are
+    the ones the list shows (all, unless a test is about filtering)."""
     config_path = tmp_path / "settings" / "config.json"
     if course is not None:
         # As the app saves it: the course is also its only recent course.
-        save_config(config_path, Config(course_dir=course, recent=(course,)))
+        save_config(
+            config_path,
+            Config(course_dir=course, recent=(course,), shown_severities=severities),
+        )
     opened = [] if opened is None else opened
     urls = [] if urls is None else urls
     shown = [] if shown is None else shown
@@ -588,12 +593,6 @@ def test_the_grouping_tabs_and_g_switch_the_grouping(tmp_path, how):
 
     async def steps(app, pilot):
         if how == "tab":
-            await pilot.click("#by-severity")
-        else:
-            await press(app, pilot, "g")
-        await settle(app, pilot)
-        assert [b.split()[0] for b in branches(app)] == ["ERROR", "WARNING"]
-        if how == "tab":
             await pilot.click("#by-folder")
         else:
             await press(app, pilot, "g")
@@ -603,6 +602,91 @@ def test_the_grouping_tabs_and_g_switch_the_grouping(tmp_path, how):
         if how == "g":
             await press(app, pilot, "g")
             assert branches(app)[0].startswith("Broken section links")
+
+    drive(app, steps)
+
+
+def test_there_is_no_severity_grouping_any_more(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course)
+
+    async def steps(app, pilot):
+        assert not app.screen.query("#by-severity")
+
+    drive(app, steps)
+
+
+def chip(app, severity):
+    return app.screen.query_one(f"#show-{severity}", Checkbox)
+
+
+def test_severity_chips_count_open_findings_and_filter_the_list(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND, WHOLE_FILE]), course)
+
+    async def steps(app, pilot):
+        labels = [str(chip(app, s).label) for s in ("error", "warning", "info")]
+        assert labels == ["ERROR 1", "WARNING 1", "INFO 1"]
+        assert len(finding_rows(app)) == 3
+        await pilot.click("#show-info")
+        await settle(app, pilot)
+        assert len(finding_rows(app)) == 2
+        assert not any("C.md" in row for row in finding_rows(app))
+        assert str(chip(app, "info").label) == "INFO 1"
+        assert "2 of 3 findings" in app.sub_title
+
+    drive(app, steps)
+
+
+@pytest.mark.parametrize(
+    ("key", "hidden"), [("1", "A.md"), ("2", "B.md"), ("3", "C.md")]
+)
+def test_keys_1_2_3_toggle_the_severity_chips(tmp_path, key, hidden):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND, WHOLE_FILE]), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, key)
+        assert not any(hidden in row for row in finding_rows(app))
+        assert len(finding_rows(app)) == 2
+        await press(app, pilot, key)
+        assert len(finding_rows(app)) == 3
+
+    drive(app, steps)
+
+
+def test_the_shown_severities_are_remembered(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, config_path = make_app(
+        tmp_path, FakeChecker([FIRST, SECOND, WHOLE_FILE]), course
+    )
+
+    async def steps(app, pilot):
+        await press(app, pilot, "2")
+        await press(app, pilot, "3")
+
+    drive(app, steps)
+    assert load_config(config_path).shown_severities == {Severity.ERROR}
+
+
+def test_the_list_opens_with_the_saved_severities(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(
+        tmp_path,
+        FakeChecker([FIRST, SECOND, WHOLE_FILE]),
+        course,
+        severities=frozenset({Severity.WARNING}),
+    )
+
+    async def steps(app, pilot):
+        assert [chip(app, s).value for s in ("error", "warning", "info")] == [
+            False,
+            True,
+            False,
+        ]
+        [row] = finding_rows(app)
+        assert "B.md" in row
+        assert "1 of 3 findings" in app.sub_title
 
     drive(app, steps)
 

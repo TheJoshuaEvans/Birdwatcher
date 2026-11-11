@@ -273,6 +273,11 @@ class BirdwatcherApp(App):
         self._config = replace(self._config, split=percent)
         save_config(self._config_path, self._config)
 
+    def _save_severities(self, severities):
+        if severities != self._config.shown_severities:
+            self._config = replace(self._config, shown_severities=frozenset(severities))
+            save_config(self._config_path, self._config)
+
     def _theme_changed(self, theme):
         # The signal arrives after the change, so compare names rather than set
         # a flag: a theme this app did not set came from the user (Ctrl+P).
@@ -305,6 +310,8 @@ class BirdwatcherApp(App):
                 self._ignore_path,
                 split=self._config.split,
                 save_split=self._save_split,
+                shown_severities=self._config.shown_severities,
+                save_severities=self._save_severities,
             )
             self.push_screen(self._findings)
         else:

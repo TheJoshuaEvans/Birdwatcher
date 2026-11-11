@@ -54,7 +54,8 @@ In the app, mouse and keyboard both work:
 | Click a branch, or the arrow keys and Enter | Fold or unfold it |
 | `z`, then `z` or Escape to go back | Show the finding's detail filling the window (in a window narrower than 120 columns, the detail is shown this way instead of beside the list) |
 | Drag the bar between the panes | Change the split; Birdwatcher remembers it |
-| The **Check / Severity / Folder** tabs, or `g` | Group the findings by check, by severity, or by folder |
+| The **Check / Folder** tabs, or `g` | Group the findings by check or by folder |
+| The **SHOW** chips, or `1` / `2` / `3` | Show or hide errors, warnings and info (each chip shows how many are open; Birdwatcher remembers the choice, and starts with errors and warnings) |
 | The **FIXED** and **IGNORED** chips | Show or hide fixed and ignored findings (each chip shows how many) |
 | `f`, or the **FIX** button | Apply the suggested fix to the file, then check again |
 | `e`, or **View in editor** | For a fixed finding: open the fixed line in VS Code |

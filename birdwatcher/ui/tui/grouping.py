@@ -1,5 +1,5 @@
 """
-Grouping the findings list into a tree: by check, by severity, or by folder.
+Grouping the findings list into a tree: by check or by folder.
 
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
@@ -12,7 +12,6 @@ class Grouping(StrEnum):
     """The ways the findings list can be grouped, in tab order."""
 
     CHECK = "check"
-    SEVERITY = "severity"
     FOLDER = "folder"
 
 
@@ -22,8 +21,8 @@ class Group:
     A branch of the findings tree.
 
     Attributes:
-        label (str): What the branch shows (a check's title, a severity, a
-            folder or file path).
+        label (str): What the branch shows (a check's title, or a folder or
+            file path).
         children (tuple[Group | Row, ...]): Its sub-branches and rows, in
             display order.
     """
@@ -45,8 +44,6 @@ def group_rows(rows, grouping, check_titles, is_folder):
 
     - CHECK: one branch per check, in the order of `check_titles`, labelled
       with its title; inside, one branch per path, with its rows.
-    - SEVERITY: one branch per label (ERROR, WARNING, INFO, FIXED, IGNORED, in
-      that order; empty ones left out); inside, one branch per path.
     - FOLDER: the folders of the paths as nested branches, each labelled with
       its own name; a file is a branch (labelled with its name) holding its
       rows; a row about a folder sits directly on that folder's branch, before
@@ -77,17 +74,7 @@ def group_rows(rows, grouping, check_titles, is_folder):
             Group(check_titles.get(check, check), _by_path(by_check[check]))
             for check in order
         )
-    if grouping == Grouping.SEVERITY:
-        by_label = _bucket(rows, lambda row: row.label[0])
-        return tuple(
-            Group(label, _by_path(by_label[label]))
-            for label in LABEL_ORDER
-            if label in by_label
-        )
     return _by_folder(rows, is_folder)
-
-
-LABEL_ORDER = ("ERROR", "WARNING", "INFO", "FIXED", "IGNORED")
 
 
 def _bucket(rows, key):
