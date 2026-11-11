@@ -1,26 +1,79 @@
-/* Styles for the Birdwatcher app (Textual CSS). */
+/* Styles for the Birdwatcher app (Textual CSS): a retro terminal look.
+   Colors come from the theme ($accent, $error, ...); this file sets shapes.
+   Double-line frames carry [ TITLES ]; chrome is in capitals. */
 
-/* Findings view: grouping tabs and status chips above the tree */
+/* Header and buttons, everywhere */
+Header {
+    text-style: bold;
+}
+
+Button {
+    border: none;
+    height: 1;
+    min-width: 0;
+    padding: 0 1;
+    text-style: bold;
+}
+
+Button:hover, Button:focus {
+    text-style: bold reverse;
+}
+
+/* Findings view: two framed panes joined by the divider ("╦ ║ ╩") */
 #findings-pane {
     width: 45%;
-}
-
-#chips {
-    height: auto;
-}
-
-#chips Checkbox {
-    border: none;
-    padding: 0 1;
-}
-
-#findings {
-    height: 1fr;
+    border: double $accent;
+    border-right: none;
+    border-title-align: left;
+    border-title-style: bold;
+    border-title-color: $accent;
 }
 
 #detail-scroll {
     width: 1fr;
     padding: 0 1;
+    border: double $accent;
+    border-left: none;
+    border-title-align: left;
+    border-title-style: bold;
+    border-title-color: $accent;
+}
+
+/* Grouping tabs: one line, the active one a solid block */
+#grouping {
+    height: 1;
+    margin: 0 1;
+}
+
+#grouping Underline {
+    display: none;
+}
+
+#grouping Tab {
+    height: 1;
+    padding: 0 1;
+}
+
+#grouping Tab.-active {
+    background: $accent;
+    color: $background;
+    text-style: bold;
+}
+
+/* Status chips: [X] FIXED 3   [ ] IGNORED 1 */
+#chips {
+    height: auto;
+    margin: 0 1;
+}
+
+#chips StatusChip {
+    border: none;
+    padding: 0 1;
+    background: transparent;
+}
+
+#findings {
+    height: 1fr;
 }
 
 #excerpt-scroll {
@@ -42,7 +95,44 @@
 }
 
 #actions Button {
-    margin-right: 1;
+    margin-right: 2;
+}
+
+/* Narrow windows (-narrow) show one pane at a time: the findings, or with z
+   the detail as its own page. Zoom (-zoomed) shows only the detail at any
+   width. A pane on its own closes its frame on the inner side. Zoom rules
+   come after the narrow ones so they win when both apply. */
+FindingsScreen.-narrow Divider,
+FindingsScreen.-narrow #detail-scroll {
+    display: none;
+}
+
+FindingsScreen.-narrow #findings-pane {
+    border-right: double $accent;
+}
+
+FindingsScreen.-zoomed #findings-pane,
+FindingsScreen.-zoomed Divider {
+    display: none;
+}
+
+FindingsScreen.-zoomed #detail-scroll {
+    display: block;
+    border-left: double $accent;
+}
+
+/* The draggable divider: the shared wall of the two frames. The pointer
+   shape shows only in terminals that support it (OSC 22). */
+Divider {
+    width: 1;
+    height: 1fr;
+    color: $accent;
+    pointer: ew-resize;
+}
+
+Divider:hover, Divider.-dragging {
+    color: $accent-lighten-2;
+    background: $accent 30%;
 }
 
 /* The ignore dialog, centred over the findings */
@@ -54,13 +144,11 @@ IgnoreDialog {
     width: 72;
     height: auto;
     padding: 1 2;
-    border: thick $accent;
+    border: double $accent;
+    border-title-align: left;
+    border-title-style: bold;
+    border-title-color: $accent;
     background: $surface;
-}
-
-#ignore-title {
-    text-style: bold;
-    margin-bottom: 1;
 }
 
 #ignore-warning {
@@ -79,31 +167,17 @@ IgnoreDialog {
 }
 
 #ignore-buttons Button {
-    margin-right: 1;
-}
-
-/* The draggable bar between the findings list and the detail panel. The
-   pointer shape shows only in terminals that support it (OSC 22). */
-Divider {
-    width: 1;
-    height: 1fr;
-    background: $accent;
-    pointer: ew-resize;
-}
-
-Divider:hover, Divider.-dragging {
-    background: $accent-lighten-2;
+    margin-right: 2;
 }
 
 /* Setup page */
 #setup {
     padding: 1 2;
     max-width: 100;
-}
-
-#setup-title {
-    text-style: bold;
-    margin-bottom: 1;
+    border: double $accent;
+    border-title-align: left;
+    border-title-style: bold;
+    border-title-color: $accent;
 }
 
 #setup-intro {
@@ -112,6 +186,7 @@ Divider:hover, Divider.-dragging {
 
 .setup-section {
     text-style: bold;
+    color: $accent;
     margin-top: 1;
 }
 
@@ -132,8 +207,13 @@ Divider:hover, Divider.-dragging {
     height: auto;
 }
 
+#setup-path Button {
+    margin-left: 1;
+}
+
 #setup-buttons {
     height: auto;
+    margin-top: 1;
 }
 
 #course-dir {

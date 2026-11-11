@@ -17,6 +17,9 @@ RECENT_KEY = "recent"
 DEFAULT_EDITOR = "vscode"
 THEME_KEY = "theme"
 THEME_AUTO = "auto"  # follow the system's light or dark mode
+SPLIT_KEY = "split"
+DEFAULT_SPLIT = 50  # percent of the window's width for the findings pane
+SPLIT_RANGE = range(10, 91)  # sensible splits, in percent
 RECENT_LIMIT = 5  # course folders remembered for quick switching
 
 
@@ -33,12 +36,15 @@ class Config:
             first.
         theme (str): The color theme's name, or THEME_AUTO to follow the
             system's light or dark mode.
+        split (int): How much of the window's width the findings pane takes
+            when the panes are side by side, in percent (10 to 90).
     """
 
     course_dir: Path
     editor: str = DEFAULT_EDITOR
     recent: tuple[Path, ...] = ()
     theme: str = THEME_AUTO
+    split: int = DEFAULT_SPLIT
 
 
 def with_course(config, course_dir):
@@ -81,8 +87,9 @@ def load_config(path):
     Returns:
         Config | None: The settings, or None when the file does not exist or
             has no readable course folder (it is then treated as not set up).
-            A missing or unreadable editor is DEFAULT_EDITOR, and a missing
-            or unreadable theme is THEME_AUTO; unreadable
+            A missing or unreadable editor is DEFAULT_EDITOR, a missing or
+            unreadable theme is THEME_AUTO, and a split that is not a whole
+            number from 10 to 90 is DEFAULT_SPLIT; unreadable
             recent entries are left out, and a file from before the recent
             list existed (no "recent" key) gets one holding just the course
             folder.
@@ -102,11 +109,15 @@ def load_config(path):
         if isinstance(entry, str)
     )
     theme = data.get(THEME_KEY)
+    split = data.get(SPLIT_KEY)
+    # bool is a kind of int in Python, so rule it out explicitly.
+    sensible = isinstance(split, int) and not isinstance(split, bool)
     return Config(
         course_dir=Path(course_dir),
         editor=editor if isinstance(editor, str) else DEFAULT_EDITOR,
         recent=recent,
         theme=theme if isinstance(theme, str) else THEME_AUTO,
+        split=split if sensible and split in SPLIT_RANGE else DEFAULT_SPLIT,
     )
 
 
@@ -126,5 +137,6 @@ def save_config(path, config):
         EDITOR_KEY: config.editor,
         RECENT_KEY: [str(folder) for folder in config.recent],
         THEME_KEY: config.theme,
+        SPLIT_KEY: config.split,
     }
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

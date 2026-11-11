@@ -88,6 +88,14 @@ class BirdwatcherApp(App):
     Save keeps it and Escape puts the previous one back. A theme chosen from
     Textual's command palette (Ctrl+P) is saved too.
 
+    Layout: in a window at least findings.NARROW_WIDTH columns wide, the
+    findings and the detail sit side by side, split as last dragged
+    (remembered in the settings; half and half at first). In a narrower window
+    the findings fill it, and z opens the highlighted finding's detail as its
+    own page. At any width, z (or Escape) toggles the detail filling the
+    window, and n / p keep moving between findings while it does. The layout
+    follows the window as it is resized.
+
     The findings view's subtitle names the course folder and the number of
     findings. Checking runs in a background thread, so the window stays
     responsive; a run that fails shows its error in the window instead of
@@ -142,7 +150,7 @@ class BirdwatcherApp(App):
             system.system_prefers_dark.
     """
 
-    TITLE = "Birdwatcher"
+    TITLE = "BIRDWATCHER"
     CSS_PATH = "birdwatcher.tcss"
 
     def __init__(
@@ -237,6 +245,10 @@ class BirdwatcherApp(App):
         self._own_theme = name
         self.theme = name
 
+    def _save_split(self, percent):
+        self._config = replace(self._config, split=percent)
+        save_config(self._config_path, self._config)
+
     def _theme_changed(self, theme):
         # The signal arrives after the change, so compare names rather than set
         # a flag: a theme this app did not set came from the user (Ctrl+P).
@@ -267,6 +279,8 @@ class BirdwatcherApp(App):
                 self._show_folder,
                 self._fix_log_path,
                 self._ignore_path,
+                split=self._config.split,
+                save_split=self._save_split,
             )
             self.push_screen(self._findings)
         else:

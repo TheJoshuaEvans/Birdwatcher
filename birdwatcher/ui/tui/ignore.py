@@ -10,6 +10,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
+from textual.content import Content
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
@@ -50,8 +51,8 @@ class IgnoreDialog(ModalScreen):
         summary.append(finding.path, style="underline")
         summary.append(f"  line {finding.line}\n" if finding.line else "\n")
         summary.append(finding.message)
-        with Vertical(id="ignore-dialog"):
-            yield Static("Ignore this finding?", id="ignore-title")
+        with Vertical(id="ignore-dialog") as dialog:
+            dialog.border_title = Content("[ IGNORE THIS FINDING? ]")
             yield Static(summary, id="ignore-summary")
             warning = Static(ERROR_WARNING, id="ignore-warning")
             warning.display = is_error
@@ -60,11 +61,11 @@ class IgnoreDialog(ModalScreen):
             yield Input(placeholder="Why it can stay as it is", id="ignore-reason")
             with Horizontal(id="ignore-buttons"):
                 yield Button(
-                    "Ignore",
+                    Content("[↵] IGNORE"),
                     variant="error" if is_error else "primary",
                     id="confirm-ignore",
                 )
-                yield Button("Cancel", id="cancel-ignore")
+                yield Button(Content("[ESC] CANCEL"), id="cancel-ignore")
 
     def on_input_submitted(self, event: Input.Submitted):
         event.stop()

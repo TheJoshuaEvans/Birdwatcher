@@ -40,6 +40,8 @@ In the app, mouse and keyboard both work:
 | Click a finding, or `n` / `p` (next / previous finding) | Show it: check, location, message, and the source lines around it |
 | Click it again, or press Enter or `o` | Open the file at that line in your editor |
 | Click a branch, or the arrow keys and Enter | Fold or unfold it |
+| `z`, then `z` or Escape to go back | Show the finding's detail filling the window (in a window narrower than 120 columns, the detail is shown this way instead of beside the list) |
+| Drag the bar between the panes | Change the split; Birdwatcher remembers it |
 | The **Check / Severity / Folder** tabs, or `g` | Group the findings by check, by severity, or by folder |
 | The **FIXED** and **IGNORED** chips | Show or hide fixed and ignored findings (each chip shows how many) |
 | `f`, or the **FIX** button | Apply the suggested fix to the file, then check again |

@@ -14,6 +14,7 @@ from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
+from textual.content import Content
 from textual.screen import Screen
 from textual.widgets import (
     Button,
@@ -26,19 +27,23 @@ from textual.widgets import (
     Tree,
 )
 
+from birdwatcher.core.config import DEFAULT_SPLIT, SPLIT_RANGE
 from birdwatcher.core.fix_log import FixedFinding, load_fixed, save_fixed
 from birdwatcher.core.fixes import FixError, apply_fix, undo_fix
 from birdwatcher.core.ignores import ignore_finding, load_ignores, save_ignores
 from birdwatcher.ui.tui.divider import Divider
 from birdwatcher.ui.tui.grouping import Grouping, group_rows
 from birdwatcher.ui.tui.ignore import IgnoreDialog
+from birdwatcher.ui.tui.retro import StatusChip
 from birdwatcher.ui.tui.rows import Row, row_order
 from birdwatcher.ui.tui.tree import FindingsTree
 
 CONTEXT_LINES = 6  # source lines shown above and below a finding
 MIN_PANE_WIDTH = 20  # columns each side keeps when the divider is dragged
-NO_FINDINGS = "No findings. Every check came back clean."
+NO_FINDINGS = "No findings. Every check came back clean: all quiet in the canopy."
 TAB_PREFIX = "by-"  # grouping tab ids: by-check, by-severity, by-folder
+NARROW_WIDTH = 120  # below this many columns, one pane at a time
+NARROW_CLASS, ZOOMED_CLASS = "-narrow", "-zoomed"  # layout states, styled in tcss
 # Each action button and the screen action it runs
 BUTTON_ACTIONS = {
     "fix": "fix",
@@ -64,6 +69,10 @@ class FindingsScreen(Screen):
         show_folder (Callable[[Path], object]): Shows a folder in the file browser.
         fix_log_path (Path): The fix log.
         ignore_path (Path): The ignore list.
+        split (int): The findings pane's share of the width when the panes are
+            side by side, in percent.
+        save_split (Callable[[int], object]): Remembers a split the user
+            dragged, in percent.
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -75,6 +84,8 @@ class FindingsScreen(Screen):
         Binding("C", "clear_all", "Clear all fixed"),
         Binding("i", "ignore", "Ignore / un-ignore"),
         Binding("h", "toggle_ignored", "Show/hide ignored"),
+        Binding("z", "toggle_zoom", "Zoom"),
+        Binding("escape", "unzoom", "Back"),
         Binding("g", "next_grouping", "Grouping"),
         Binding("n", "next_finding", "Next"),
         Binding("p", "previous_finding", "Previous"),
@@ -93,8 +104,13 @@ class FindingsScreen(Screen):
         show_folder,
         fix_log_path,
         ignore_path,
+        split=DEFAULT_SPLIT,
+        save_split=None,
     ):
         super().__init__()
+        self._split = split
+        self._save_split = save_split or (lambda percent: None)
+        self._zoomed = False
         self.course_dir = course_dir
         self._check = check
         self._open_in_editor = open_in_editor
@@ -114,14 +130,14 @@ class FindingsScreen(Screen):
             with Vertical(id="findings-pane"):
                 yield Tabs(
                     *(
-                        Tab(grouping.value.title(), id=f"{TAB_PREFIX}{grouping.value}")
+                        Tab(grouping.value.upper(), id=f"{TAB_PREFIX}{grouping.value}")
                         for grouping in Grouping
                     ),
                     id="grouping",
                 )
                 with Horizontal(id="chips"):
-                    yield Checkbox("FIXED 0", value=True, id="show-fixed")
-                    yield Checkbox("IGNORED 0", value=False, id="show-ignored")
+                    yield StatusChip("FIXED 0", value=True, id="show-fixed")
+                    yield StatusChip("IGNORED 0", value=False, id="show-ignored")
                 yield FindingsTree(id="findings")
             yield Divider("#findings-pane", min_width=MIN_PANE_WIDTH)
             with VerticalScroll(id="detail-scroll"):
@@ -132,19 +148,53 @@ class FindingsScreen(Screen):
                     yield Static(id="excerpt")
                 yield Static(id="fix-summary")
                 with Horizontal(id="actions"):
-                    yield Button("FIX", variant="success", id="fix")
-                    yield Button("View in editor", id="view-editor")
-                    yield Button("View on site", id="view-site")
-                    yield Button("Undo", variant="warning", id="undo")
-                    yield Button("Clear", id="clear")
-                    yield Button("Ignore", id="ignore")
-                    yield Button("Un-ignore", id="unignore")
+                    # Each label shows the button's key.
+                    yield Button(Content("[F] FIX"), variant="success", id="fix")
+                    yield Button(Content("[E] VIEW IN EDITOR"), id="view-editor")
+                    yield Button(Content("[W] VIEW ON SITE"), id="view-site")
+                    yield Button(Content("[U] UNDO"), variant="warning", id="undo")
+                    yield Button(Content("[C] CLEAR"), id="clear")
+                    yield Button(Content("[I] IGNORE"), id="ignore")
+                    yield Button(Content("[I] UN-IGNORE"), id="unignore")
         yield Footer()
 
     def on_mount(self):
+        self.query_one("#findings-pane").border_title = Content("[ FINDINGS ]")
+        self.query_one("#detail-scroll").border_title = Content("[ DETAIL ]")
         self._load_course_state()
+        self._apply_layout()
         self._show_row(None)
         self._start_checking()
+
+    # Layout: side by side when wide; one pane at a time when narrow or zoomed
+
+    def on_resize(self, event):
+        self._apply_layout()
+
+    def _apply_layout(self):
+        narrow = self.size.width < NARROW_WIDTH
+        self.set_class(narrow, NARROW_CLASS)
+        self.set_class(self._zoomed, ZOOMED_CLASS)
+        # A width set here outranks the stylesheet, so it is set for both cases.
+        pane = self.query_one("#findings-pane")
+        pane.styles.width = "1fr" if narrow else f"{self._split}%"
+        self.refresh_bindings()
+
+    def action_toggle_zoom(self):
+        self._zoomed = not self._zoomed
+        self._apply_layout()
+
+    def action_unzoom(self):
+        if self._zoomed:
+            self.action_toggle_zoom()
+
+    def on_divider_released(self, event: Divider.Released):
+        # Remember the split as a share of the width, for other window sizes;
+        # the pane keeps the exact width it was dragged to until the next resize.
+        total = self.query_one("#findings-pane").parent.size.width
+        percent = round(event.width * 100 / total)
+        self._split = min(max(percent, SPLIT_RANGE.start), SPLIT_RANGE.stop - 1)
+        self._save_split(self._split)
 
     def change_course(self, course_dir):
         """Switch to another course folder and check it."""
@@ -390,6 +440,8 @@ class FindingsScreen(Screen):
             return row is not None and not is_fixed
         if action == "toggle_ignored":
             return bool(self._ignores)
+        if action == "unzoom":
+            return self._zoomed
         return True
 
     def action_ignore(self):

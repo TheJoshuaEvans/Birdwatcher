@@ -12,7 +12,15 @@ from datetime import UTC, datetime
 
 import pytest
 from rich.console import Console
-from textual.widgets import Checkbox, Input, OptionList, RadioButton, Select, Static
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Input,
+    OptionList,
+    RadioButton,
+    Select,
+    Static,
+)
 
 from birdwatcher.core.check import Check
 from birdwatcher.core.config import Config, load_config, save_config
@@ -128,11 +136,12 @@ def make_app(
     return app, config_path
 
 
-def drive(app, steps):
-    """Run the app headless, wait for loading, then run `steps(app, pilot)`."""
+def drive(app, steps, size=None):
+    """Run the app headless (at `size`, default SCREEN), wait for loading, then
+    run `steps(app, pilot)`."""
 
     async def main():
-        async with app.run_test(size=SCREEN) as pilot:
+        async with app.run_test(size=size or SCREEN) as pilot:
             await settle(app, pilot)
             await steps(app, pilot)
 
@@ -880,6 +889,145 @@ def test_editor_failure_does_not_close_the_app(tmp_path):
         assert FIRST.message in panel_text(app)
 
     drive(app, steps)
+
+
+# Look
+
+
+def test_bracketed_labels_and_frame_titles_show_as_written(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIXABLE]), course)
+
+    async def steps(app, pilot):
+        screen = app.screen
+        assert str(screen.query_one("#fix", Button).label) == "[F] FIX"
+        assert str(screen.query_one("#ignore", Button).label) == "[I] IGNORE"
+        assert str(screen.query_one("#findings-pane").border_title) == "[ FINDINGS ]"
+        assert str(screen.query_one("#detail-scroll").border_title) == "[ DETAIL ]"
+        await press(app, pilot, "i")
+        assert (
+            str(app.screen.query_one("#cancel-ignore", Button).label) == "[ESC] CANCEL"
+        )
+
+    drive(app, steps)
+
+
+# Layout
+
+WIDE, NARROW = (140, 40), (100, 40)
+
+
+def showing(app):
+    """Which of the findings pane and the detail panel are on screen."""
+    screen = app.screen
+    return {
+        name
+        for name, selector in (
+            ("findings", "#findings-pane"),
+            ("detail", "#detail-scroll"),
+        )
+        if screen.query_one(selector).display
+    }
+
+
+def test_a_wide_window_shows_both_panes_half_and_half(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course)
+
+    async def steps(app, pilot):
+        assert showing(app) == {"findings", "detail"}
+        assert app.screen.query_one("#findings-pane").outer_size.width == WIDE[0] // 2
+
+    drive(app, steps, WIDE)
+
+
+def test_a_narrow_window_shows_only_the_findings(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course)
+
+    async def steps(app, pilot):
+        assert showing(app) == {"findings"}
+
+    drive(app, steps, NARROW)
+
+
+@pytest.mark.parametrize("back", ["z", "escape"])
+def test_z_in_a_narrow_window_opens_the_detail_page(tmp_path, back):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "z")
+        assert showing(app) == {"detail"}
+        assert FIRST.message in panel_text(app)
+        await press(app, pilot, back)
+        assert showing(app) == {"findings"}
+
+    drive(app, steps, NARROW)
+
+
+@pytest.mark.parametrize("back", ["z", "escape"])
+def test_z_in_a_wide_window_zooms_the_detail(tmp_path, back):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "z")
+        assert showing(app) == {"detail"}
+        await press(app, pilot, back)
+        assert showing(app) == {"findings", "detail"}
+
+    drive(app, steps, WIDE)
+
+
+def test_n_and_p_page_through_the_details_while_zoomed(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "z", "n")
+        assert showing(app) == {"detail"}
+        assert SECOND.message in panel_text(app)
+        await press(app, pilot, "p")
+        assert FIRST.message in panel_text(app)
+
+    drive(app, steps, NARROW)
+
+
+def test_resizing_the_window_switches_the_layout(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course)
+
+    async def steps(app, pilot):
+        await pilot.resize_terminal(*NARROW)
+        await pilot.pause()
+        assert showing(app) == {"findings"}
+        await pilot.resize_terminal(*WIDE)
+        await pilot.pause()
+        assert showing(app) == {"findings", "detail"}
+
+    drive(app, steps, WIDE)
+
+
+def test_the_dragged_split_is_remembered(tmp_path):
+    course = make_course(tmp_path / "course")
+    first, config_path = make_app(tmp_path, FakeChecker([FIRST]), course)
+
+    async def drag(app, pilot):
+        destination = (app.screen.query_one(Divider).region.x - 14, 5)
+        await pilot.mouse_down(Divider)
+        await pilot.hover(None, offset=destination)
+        await pilot.mouse_up(None, offset=destination)
+        await pilot.pause()
+
+    drive(first, drag, WIDE)
+    assert load_config(config_path).split == 40  # 56 of 140 columns
+    second, _ = make_app(tmp_path, FakeChecker([FIRST]))
+
+    async def check(app, pilot):
+        assert app.screen.query_one("#findings-pane").outer_size.width == 56
+
+    drive(second, check, WIDE)
 
 
 # Themes

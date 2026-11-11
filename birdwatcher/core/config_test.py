@@ -11,6 +11,7 @@ import pytest
 
 from birdwatcher.core.config import (
     DEFAULT_EDITOR,
+    DEFAULT_SPLIT,
     RECENT_LIMIT,
     THEME_AUTO,
     Config,
@@ -118,6 +119,20 @@ def test_older_settings_without_a_theme_match_the_system(tmp_path):
     path = tmp_path / "config.json"
     path.write_text('{"course_dir": "a", "theme": 3}', encoding="utf-8")
     assert load_config(path).theme == THEME_AUTO
+
+
+def test_the_split_loads_back_and_defaults_to_half(tmp_path):
+    path = tmp_path / "config.json"
+    assert Config(course_dir=Path("a")).split == DEFAULT_SPLIT
+    save_config(path, Config(course_dir=Path("a"), split=35))
+    assert load_config(path).split == 35
+
+
+@pytest.mark.parametrize("stored", ["3", "true", "5", "95", '"wide"'])
+def test_a_split_that_is_not_a_sensible_percentage_is_the_default(tmp_path, stored):
+    path = tmp_path / "config.json"
+    path.write_text(f'{{"course_dir": "a", "split": {stored}}}', encoding="utf-8")
+    assert load_config(path).split == DEFAULT_SPLIT
 
 
 def test_default_path_is_a_json_file_named_for_birdwatcher():

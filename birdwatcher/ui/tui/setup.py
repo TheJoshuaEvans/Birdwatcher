@@ -13,6 +13,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, VerticalScroll
+from textual.content import Content
 from textual.screen import Screen
 from textual.widgets import (
     Button,
@@ -111,9 +112,8 @@ class SetupScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         with VerticalScroll(id="setup"):
-            yield Static("Course folder", id="setup-title")
             yield Static(SETUP_INTRO, id="setup-intro")
-            recent_label = Static("Recent courses", classes="setup-section")
+            recent_label = Static("RECENT COURSES", classes="setup-section")
             recent = OptionList(
                 *(
                     Option(_recent_prompt(folder), id=str(index))
@@ -124,15 +124,15 @@ class SetupScreen(Screen):
             recent_label.display = recent.display = bool(self._recent)
             yield recent_label
             yield recent
-            yield Static("Another folder", classes="setup-section")
+            yield Static("ANOTHER FOLDER", classes="setup-section")
             with Horizontal(id="setup-path"):
                 yield Input(
                     value="" if self._course_dir is None else str(self._course_dir),
                     placeholder=r"C:\path\to\CS212-CourseMaterials",
                     id="course-dir",
                 )
-                yield Button("Browse…", id="browse")
-            yield Static("Open files with", classes="setup-section")
+                yield Button(Content("[^O] BROWSE"), id="browse")
+            yield Static("OPEN FILES WITH", classes="setup-section")
             with RadioSet(id="editor"):
                 for editor in self._editors.values():
                     yield RadioButton(
@@ -141,7 +141,7 @@ class SetupScreen(Screen):
                         id=f"{EDITOR_ID_PREFIX}{editor.id}",
                         disabled=not editor.available,
                     )
-            yield Static("Color theme", classes="setup-section")
+            yield Static("COLOR THEME", classes="setup-section")
             yield Select(
                 [(MATCH_SYSTEM, THEME_AUTO), *((name, name) for name in self._themes)],
                 value=self._theme,
@@ -150,8 +150,11 @@ class SetupScreen(Screen):
             )
             yield Static(self._problem or "", id="setup-error")
             with Horizontal(id="setup-buttons"):
-                yield Button("Save", variant="primary", id="save")
+                yield Button(Content("[↵] SAVE"), variant="primary", id="save")
         yield Footer()
+
+    def on_mount(self):
+        self.query_one("#setup").border_title = Content("[ COURSE FOLDER ]")
 
     def check_action(self, action, parameters):
         if action == "cancel":

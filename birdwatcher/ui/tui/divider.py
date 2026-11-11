@@ -5,9 +5,11 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
 from textual import events
+from textual.message import Message
 from textual.widget import Widget
 
 DRAGGING_CLASS = "-dragging"  # styled like :hover, so the bar stays lit mid-drag
+MIN_JOINED_HEIGHT = 2  # room for both joints
 
 
 class Divider(Widget):
@@ -15,9 +17,11 @@ class Divider(Widget):
     A vertical bar between two side-by-side panes. Pressing the mouse on it and
     dragging moves the bar: the pane on its left (`target`) is resized so its
     right edge follows the pointer, until the button is released. Neither pane
-    shrinks below `min_width` columns. Moving the mouse without pressing on the
-    bar changes nothing. The bar's look, and its look while hovered or dragged
-    (class "-dragging"), come from the stylesheet.
+    shrinks below `min_width` columns. Releasing the button posts a Released
+    message with the pane's new width. Moving the mouse without pressing on the
+    bar changes nothing. It is drawn as a double line, "╦" at the top and "╩"
+    at the bottom, to join double frames on either side; its colors, and its
+    look while hovered or dragged (class "-dragging"), come from the stylesheet.
 
     Args:
         target (str): CSS selector, within the same screen, of the pane on the
@@ -26,6 +30,20 @@ class Divider(Widget):
         id (str | None): The widget's id.
     """
 
+    class Released(Message):
+        """
+        Posted when a drag ends (the button is released after pressing on the
+        bar), so the new size can be remembered.
+
+        Attributes:
+            width (int): The left pane's width now, in columns, including any
+                border.
+        """
+
+        def __init__(self, width):
+            super().__init__()
+            self.width = width
+
     def __init__(self, target, *, min_width, id=None):
         super().__init__(id=id)
         self._target = target
@@ -33,9 +51,13 @@ class Divider(Widget):
         self._dragging = False
 
     def render(self):
-        # The bar is drawn by its background; without this, Textual shows the
-        # widget's name and classes as text.
-        return ""
+        # A double line with joints at both ends, so it meets double frames on
+        # either side like a split pane. (Without a render, Textual would show
+        # the widget's name and classes.)
+        height = self.size.height
+        if height < MIN_JOINED_HEIGHT:
+            return "║" * height
+        return "\n".join(["╦", *["║"] * (height - 2), "╩"])
 
     def on_mouse_down(self, event: events.MouseDown):
         self._dragging = True
@@ -61,3 +83,6 @@ class Divider(Widget):
         self.remove_class(DRAGGING_CLASS)
         self.release_mouse()
         event.stop()
+        pane = self.screen.query_one(self._target)
+        # The outer width (border included) is what the drag sets.
+        self.post_message(self.Released(pane.outer_size.width))

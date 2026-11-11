@@ -27,11 +27,18 @@ class TwoPanes(App):
     Divider {{ width: 1; }}
     """
 
+    def __init__(self):
+        super().__init__()
+        self.released = []
+
     def compose(self):
         with Horizontal():
             yield Static("left", id="left")
             yield Divider("#left", min_width=MIN_WIDTH)
             yield Static("right", id="right")
+
+    def on_divider_released(self, event: Divider.Released):
+        self.released.append(event.width)
 
 
 def run_panes(steps):
@@ -60,9 +67,13 @@ async def drag(pilot, columns):
     await pilot.mouse_up(None, offset=destination)
 
 
-def test_the_bar_shows_no_text():
+def test_the_bar_is_a_double_line_joining_the_frames_above_and_below():
     async def steps(pilot):
-        assert str(pilot.app.query_one(Divider).render()).strip() == ""
+        divider = pilot.app.query_one(Divider)
+        lines = str(divider.render()).split("\n")
+        assert len(lines) == divider.size.height
+        assert lines[0] == "╦" and lines[-1] == "╩"
+        assert set(lines[1:-1]) == {"║"}
 
     run_panes(steps)
 
@@ -80,6 +91,21 @@ def test_the_right_pane_keeps_its_minimum_width():
     right_edge = SCREEN_WIDTH - 1 - LEFT_WIDTH
     widest = SCREEN_WIDTH - 1 - MIN_WIDTH  # the divider takes one column
     assert run_panes(lambda pilot: drag(pilot, right_edge)) == widest
+
+
+def test_releasing_after_a_drag_reports_the_new_width():
+    async def steps(pilot):
+        await drag(pilot, -15)
+
+    app = TwoPanes()
+
+    async def main():
+        async with app.run_test(size=(SCREEN_WIDTH, 10)) as pilot:
+            await steps(pilot)
+            await pilot.pause()
+
+    asyncio.run(main())
+    assert app.released == [LEFT_WIDTH - 15]
 
 
 def test_moving_without_pressing_changes_nothing():
