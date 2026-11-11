@@ -10,7 +10,7 @@ README's checklist.
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
-from birdwatcher.checks import anchors, labels, numbering
+from birdwatcher.checks import anchors, headings, labels, numbering
 from birdwatcher.core.check import Check
 
 ALL_CHECKS = (
@@ -44,5 +44,15 @@ ALL_CHECKS = (
             "the page as a stray word."
         ),
         run=lambda context: labels.check_labels(context.root),
+    ),
+    Check(
+        id=headings.CHECK,
+        title="Skipped heading levels",
+        description=(
+            "A heading more than one level below the one before it (an h2 followed "
+            "by an h4). Screen readers navigate pages by their headings, and a "
+            "skipped level makes it look as if a section is missing."
+        ),
+        run=lambda context: headings.check_headings(context.root),
     ),
 )
