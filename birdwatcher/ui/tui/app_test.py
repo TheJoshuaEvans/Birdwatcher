@@ -171,10 +171,10 @@ def render_text(renderable, width=120):
 
 
 def panel_text(app):
-    """The detail panel's visible content (message, source excerpt, fix) as
-    plain text."""
+    """The detail panel's visible content (message, source excerpt, fix, a
+    branch's list of findings) as plain text."""
     parts = [app.screen.query_one("#detail", Static).content]
-    for selector in ("#excerpt", "#fix-summary"):
+    for selector in ("#excerpt", "#fix-summary", "#branch-list"):
         widget = app.screen.query_one(selector, Static)
         if widget.display:
             parts.append(widget.content)
@@ -1561,6 +1561,67 @@ def test_a_highlighted_branch_summarizes_its_findings(tmp_path):
         assert "2 can be fixed, in 2 files" in text
         assert is_visible(app, "#fix")
         assert "FIX ALL 2" in str(app.screen.query_one("#fix", Button).label)
+
+    drive(app, steps)
+
+
+def test_a_branch_lists_every_finding_under_its_file_with_its_fix(tmp_path):
+    course = make_course(tmp_path / "course")
+    checker = FakeChecker([FIXABLE, OTHER_FIXABLE, SECOND])
+    app, _ = make_app(tmp_path, checker, course)
+
+    async def steps(app, pilot):
+        await on_check_branch(app, pilot)
+        listing = render_text(app.screen.query_one("#branch-list", Static).content)
+        lines = [" ".join(line.split()) for line in listing.splitlines()]
+        assert lines.index("docs/A.md") < lines.index("docs/B.md")
+        for finding in (FIXABLE, OTHER_FIXABLE, SECOND):
+            assert finding.message in listing
+        assert "ERROR 3 Broken link." in lines
+        assert "- broken" in lines and "+ fixed" in lines  # FIXABLE's fix
+        assert "- beta" in lines and "+ gamma" in lines
+
+    drive(app, steps)
+
+
+def test_the_fix_all_button_sits_above_the_branch_list(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIXABLE, OTHER_FIXABLE]), course)
+
+    async def steps(app, pilot):
+        await on_check_branch(app, pilot)
+        button = app.screen.query_one("#fix", Button)
+        listing = app.screen.query_one("#branch-list", Static)
+        assert button.region.y < listing.region.y
+
+    drive(app, steps)
+
+
+def test_a_branch_mixing_checks_names_each_findings_check(tmp_path):
+    course = make_course(tmp_path / "course")
+    note = Finding("labs", Severity.INFO, "docs/A.md", 1, "Shared number.")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, note]), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "g")  # by folder: docs holds both checks
+        tree = app.screen.query_one(FindingsTree)
+        tree.move_cursor(tree.root.children[0])
+        await settle(app, pilot)
+        listing = render_text(app.screen.query_one("#branch-list", Static).content)
+        assert "Broken section links · First problem." in " ".join(listing.split())
+        assert "labs · Shared number." in " ".join(listing.split())
+
+    drive(app, steps)
+
+
+def test_a_finding_shows_no_branch_list(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
+
+    async def steps(app, pilot):
+        await on_check_branch(app, pilot)
+        await press(app, pilot, "n")
+        assert not is_visible(app, "#branch-list")
 
     drive(app, steps)
 

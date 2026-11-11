@@ -60,7 +60,7 @@ In the app, mouse and keyboard both work:
 | The **FIXED** and **IGNORED** chips | Show or hide fixed and ignored findings (each chip shows how many) |
 | The **FIND** box, or `/` | Show only findings whose file, message or check contains the text, as you type (`F401`, `Lab05`, `lanecc`...); Enter goes back to the list keeping the search, Escape clears it |
 | `f`, the **FIX** button, or a row's **[F] FIX** marker | Apply the suggested fix to the file, then check again (fixable rows end in the marker; long messages end in "…" and show in full in the detail) |
-| Highlight a branch (a check, folder or file) | Show a summary of its findings: how many of each severity, by check, and how many can be fixed |
+| Highlight a branch (a check, folder or file) | Show a summary of its findings (how many of each severity, by check, and how many can be fixed), the **FIX ALL** button, and every finding in it under its file, with its line, message and suggested fix, to review before fixing them all |
 | `f`, **FIX ALL**, or a branch's **[F] FIX N** marker (shown from 2 fixes up) | Fix every fixable finding showing in that branch, after a confirmation, then check again once. A fix that fails (its line changed since the check) is skipped and listed in the branch's summary; the rest still apply |
 | `e`, or **View in editor** | For a fixed finding: open the fixed line in VS Code |
 | `w`, or **View on site** | For a fixed finding: open the section the fixed link leads to, on the published site |

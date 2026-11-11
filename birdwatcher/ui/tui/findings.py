@@ -5,12 +5,15 @@ detail, with fixing (and undoing and clearing fixes) and ignoring.
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
+import itertools
 import threading
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import ClassVar
 
+from rich.console import Group
 from rich.syntax import Syntax
+from rich.table import Table
 from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
@@ -42,7 +45,7 @@ from birdwatcher.ui.tui.ignore import IgnoreDialog
 from birdwatcher.ui.tui.retro import StatusChip
 from birdwatcher.ui.tui.rows import Row, row_order
 from birdwatcher.ui.tui.search import SearchBox
-from birdwatcher.ui.tui.tree import BranchKey, FindingsTree
+from birdwatcher.ui.tui.tree import LABEL_WIDTH, LINE_WIDTH, BranchKey, FindingsTree
 from birdwatcher.ui.tui.watch import WatchStrip
 
 CONTEXT_LINES = 6  # source lines shown above and below a finding
@@ -208,6 +211,8 @@ class FindingsScreen(Screen):
                     yield Button(Content("[C] CLEAR"), id="clear")
                     yield Button(Content("[I] IGNORE"), id="ignore")
                     yield Button(Content("[I] UN-IGNORE"), id="unignore")
+                # A branch's findings, below its FIX ALL button
+                yield Static(id="branch-list")
         yield Footer()
 
     def on_mount(self):
@@ -536,6 +541,7 @@ class FindingsScreen(Screen):
         for button in buttons.values():
             button.display = False
         summary.display = False
+        self.query_one("#branch-list", Static).display = False
         self._show_excerpt(None)
         self.refresh_bindings()
         if row is None:
@@ -836,7 +842,45 @@ class FindingsScreen(Screen):
         fix_button.label = Content(f"[F] FIX ALL {len(fixable)}")
         fix_button.display = bool(fixable)
         self.query_one("#actions").display = bool(fixable)
+        listing = self.query_one("#branch-list", Static)
+        listing.update(self._branch_listing(rows))
+        listing.display = bool(rows)
         self.refresh_bindings()
+
+    def _branch_listing(self, rows):
+        """Every row, under its file: severity, line, the message (after the
+        check's title when the rows mix checks) and any suggested fix."""
+        mixed = len({row.finding.check for row in rows}) > 1
+        parts = []
+        for path, in_file in itertools.groupby(rows, key=lambda row: row.finding.path):
+            parts.append(Text(path, style="bold underline"))
+            # A grid per file, so a long message wraps under its own column.
+            grid = Table.grid(padding=(0, 1))
+            grid.add_column(width=LABEL_WIDTH)
+            grid.add_column(width=LINE_WIDTH, justify="right")
+            # fold: a long link or anchor breaks across lines, never cut short
+            grid.add_column(ratio=1, overflow="fold")
+            for row in in_file:
+                finding = row.finding
+                label, style = row.label
+                message = Text()
+                if mixed:
+                    message.append(f"{self._check_title(finding)} · ", style="dim")
+                message.append(finding.message)
+                line = "" if finding.line is None else str(finding.line)
+                grid.add_row(Text(label, style=style), line, message)
+                if finding.fix is not None:
+                    # The sign sits in the line column, so it stays beside its
+                    # text however the text folds.
+                    for sign, text, color in (
+                        ("-", finding.fix.before, "red"),
+                        ("+", finding.fix.after, "green"),
+                    ):
+                        grid.add_row(
+                            "", Text(sign, style=color), Text(text, style=color)
+                        )
+            parts += [grid, Text("")]
+        return Group(*parts)
 
     def action_undo(self):
         row = self._current()

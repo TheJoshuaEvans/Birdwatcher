@@ -135,6 +135,10 @@ WatchStrip {
     margin-top: 1;
 }
 
+#branch-list {
+    margin-top: 1;
+}
+
 #actions {
     height: auto;
     margin-top: 1;
