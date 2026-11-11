@@ -10,7 +10,7 @@ README's checklist.
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
-from birdwatcher.checks import anchors, numbering
+from birdwatcher.checks import anchors, labels, numbering
 from birdwatcher.core.check import Check
 
 ALL_CHECKS = (
@@ -34,5 +34,15 @@ ALL_CHECKS = (
             "open the wrong one."
         ),
         run=lambda context: numbering.check_numbering(context.root),
+    ),
+    Check(
+        id=labels.CHECK,
+        title="Stray language labels",
+        description=(
+            'A lone "Python" (or another language\'s name) on its own line just above '
+            "a code block, left over from copying code out of an editor. It shows on "
+            "the page as a stray word."
+        ),
+        run=lambda context: labels.check_labels(context.root),
     ),
 )

@@ -17,7 +17,9 @@ def drive(app, steps, size=(140, 40)):
         async with app.run_test(size=size) as pilot:
             await settle(app, pilot)
             await steps(app, pilot)
+
     asyncio.run(main())
+
 
 async def settle(app, pilot):
     # After anything that starts a thread worker (loading, re-checking).
@@ -48,7 +50,7 @@ await pilot.mouse_up(None, offset=destination)
 Inside `run_test`, set a theme and save an SVG; a small HTML page of them compares looks side by side.
 
 ```python
-for theme in sorted(app.available_themes):   # 21 built-in themes in 8.x
+for theme in sorted(app.available_themes):  # 21 built-in themes in 8.x
     app.theme = theme
     await pilot.pause()
     app.save_screenshot(f"{theme}.svg", path=str(out_dir))
@@ -87,7 +89,7 @@ class FindingsTree(Tree):
             node = None if line is None else self.get_node_at_line(line)
             if node is None:
                 return
-            if node.allow_expand:          # branches fold at once
+            if node.allow_expand:  # branches fold at once
                 self.cursor_line = line
                 node.toggle()
             elif line == self.cursor_line:
@@ -203,7 +205,7 @@ try:
     chosen = filedialog.askdirectory(parent=root, mustexist=True)
 finally:
     root.destroy()
-folder = Path(chosen) if chosen else None   # "" or () when cancelled
+folder = Path(chosen) if chosen else None  # "" or () when cancelled
 ```
 
 - **System dark mode:** Windows `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize\AppsUseLightTheme` (0 = dark); macOS `defaults read -g AppleInterfaceStyle` prints "Dark" (fails in light mode); GNOME `gsettings get org.gnome.desktop.interface color-scheme`. This is the system's setting, not the terminal's colors.

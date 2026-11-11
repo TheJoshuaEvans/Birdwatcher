@@ -15,6 +15,7 @@ import urllib.parse
 from collections import Counter
 from pathlib import Path
 
+from birdwatcher.checks.pages import prose_lines, read_page, site_pages
 from birdwatcher.core.course import DOCS_FOLDER
 from birdwatcher.core.findings import Destination, Finding, Fix, Severity
 
@@ -24,8 +25,6 @@ FOLDER_INDEX_NAMES = frozenset({"index.md", "index.html", "readme.md"})
 ALWAYS_PRESENT = frozenset({"", "top"})  # browsers scroll to the top for these
 SUGGESTION_CUTOFF = 0.6  # difflib similarity needed to suggest an existing id
 
-FRONT_MATTER = re.compile(r"\A---[ \t]*\n.*?\n---[ \t]*(?:\n|\Z)", re.DOTALL)
-FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 ATX_HEADING = re.compile(r"^ {0,3}#{1,6}(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
 EXPLICIT_ID = re.compile(r"[ \t]*\{:?[ \t]*#([\w-]+)[^}]*\}[ \t]*$")
 ID_ATTRIBUTE = re.compile(r"""\b(?:id|name)\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
@@ -115,7 +114,7 @@ def check_anchors(repo_root, site_url):
         return anchors_by_page[page]
 
     findings = []
-    for page in _site_pages(docs):
+    for page in site_pages(docs):
         for line_number, target in _links(_block_lines(page)):
             resolved = _resolve(page, target, docs, site_url)
             if resolved is None:
@@ -150,45 +149,9 @@ def check_anchors(repo_root, site_url):
     return sorted(findings, key=lambda finding: (finding.path, finding.line))
 
 
-def _site_pages(docs):
-    """Markdown pages of the site, skipping Jekyll's _folders and hidden folders."""
-    pages = (
-        page
-        for page in docs.rglob("*.md")
-        if not any(
-            part.startswith(("_", ".")) for part in page.relative_to(docs).parts[:-1]
-        )
-    )
-    return sorted(pages, key=lambda page: page.relative_to(docs).as_posix())
-
-
-def _read(page):
-    return page.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
-
-
 def _block_lines(page):
     """The page's lines with front matter and fenced code blocks blanked out."""
-    text = _read(page)
-    lines = text.split("\n")
-    front_matter = FRONT_MATTER.match(text)
-    if front_matter:
-        for index in range(front_matter.group(0).count("\n")):
-            lines[index] = ""
-    fence = None
-    for index, line in enumerate(lines):
-        if fence is not None:
-            closing = re.match(
-                rf"^ {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*$", line
-            )
-            if closing:
-                fence = None
-            lines[index] = ""
-            continue
-        opening = FENCE_OPEN.match(line)
-        if opening:
-            fence = opening.group(1)
-            lines[index] = ""
-    return lines
+    return prose_lines(read_page(page))
 
 
 def _links(lines):
@@ -205,7 +168,7 @@ def _page_anchors(page):
     the ids every page has)."""
     anchors = dict.fromkeys(ALWAYS_PRESENT)
     if page.suffix.lower() != ".md":
-        for number, line in enumerate(_read(page).split("\n"), start=1):
+        for number, line in enumerate(read_page(page).split("\n"), start=1):
             for anchor in ID_ATTRIBUTE.findall(line):
                 anchors.setdefault(anchor, number)
         return anchors
