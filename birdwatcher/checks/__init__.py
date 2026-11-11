@@ -10,7 +10,14 @@ README's checklist.
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
-from birdwatcher.checks import anchors, headings, labels, numbering
+from birdwatcher.checks import (
+    anchors,
+    frontmatter,
+    headings,
+    images,
+    labels,
+    numbering,
+)
 from birdwatcher.core.check import Check
 
 ALL_CHECKS = (
@@ -54,5 +61,23 @@ ALL_CHECKS = (
             "skipped level makes it look as if a section is missing."
         ),
         run=lambda context: headings.check_headings(context.root),
+    ),
+    Check(
+        id=images.CHECK,
+        title="Images without alt text",
+        description=(
+            "Images with no alternative text, which screen readers cannot describe "
+            "and which show as nothing when they fail to load."
+        ),
+        run=lambda context: images.check_images(context.root),
+    ),
+    Check(
+        id=frontmatter.CHECK,
+        title="Incomplete front matter",
+        description=(
+            "Published pages without a title, description or author in their front "
+            "matter. The site uses the title for the breadcrumb and browser tab."
+        ),
+        run=lambda context: frontmatter.check_front_matter(context.root),
     ),
 )

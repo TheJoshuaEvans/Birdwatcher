@@ -98,8 +98,8 @@ Checks produce findings as plain data: the check, the severity, the file and lin
 - [x] **Renumbering leftovers:** files named for a different lab or group than the folder they are in (warnings), and lab folders that share a number (info). Opening a folder finding shows it in your file browser.
 - [x] **Stray language labels:** a line reading only "Python" (or "Bash", "PowerShell"...) directly above a code block, left over from pasting code out of an editor or a chat assistant. Fixable: the label is removed.
 - [x] **Skipped heading levels:** a heading more than one level below the previous one, which breaks navigation for screen-reader users. Markdown headings are fixable (moved up to one level below the previous heading).
-- [ ] **Images without alt text:** images that screen readers cannot describe.
-- [ ] **Incomplete front matter:** pages missing a `title`, `description` or `author`.
+- [x] **Images without alt text:** images that screen readers cannot describe. An HTML `alt=""` (a decorative image) is fine.
+- [x] **Incomplete front matter:** published pages missing a `title`, `description` or `author` (README files are skipped; the site doesn't publish them).
 - [ ] **Python style:** [Ruff](https://docs.astral.sh/ruff/) over the course's `.py` files, using the rules from the course's own `PythonStyleAndBestPracticesChecklist.md`.
 
 ### Ideas for later

@@ -17,7 +17,11 @@ from birdwatcher.core.config import Config, save_config
 from birdwatcher.ui.tui.app import BirdwatcherApp
 from birdwatcher.ui.tui.tree import FindingsTree
 
-BROKEN_PAGE = "[Jump](#nowhere)\n\n## Somewhere\n"
+# A complete page apart from one broken section link, so that link is its only finding.
+BROKEN_PAGE = (
+    "---\ntitle: Page\ndescription: A test page\nauthor: Test\n---\n"
+    "[Jump](#nowhere)\n\n## Somewhere\n"
+)
 
 
 def make_course(folder):
