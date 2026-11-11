@@ -109,7 +109,7 @@ Checks produce findings as plain data: the check, the severity, the file and lin
 | `uv run ruff check` | Lints with the course style rules (configured in `pyproject.toml`). |
 | `uv run ruff format` | Formats the code. |
 | `uv run python -m birdwatcher` | Runs Birdwatcher from the source, the same as `uv run birdwatcher`. |
-| `$env:TEXTUAL_DEBUG = "1"; uv run birdwatcher` | Runs the app in Textual's debug mode, which reloads `birdwatcher.tcss` whenever it is saved (PowerShell; in bash, `TEXTUAL_DEBUG=1 uv run birdwatcher`). |
+| `$env:TEXTUAL_DEBUG = "1"; uv run birdwatcher` | Runs the app in Textual's debug mode, which reloads `birdwatcher.tcss` whenever it is saved (PowerShell; in bash, `TEXTUAL_DEBUG=1 uv run birdwatcher`). Debug mode also logs every key and mouse event to `keys.log` in the current folder; it is git-ignored. |
 
 ### Project layout
 

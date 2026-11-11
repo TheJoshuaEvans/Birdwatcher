@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Textual's debug mode (TEXTUAL_DEBUG=1) logs every key and mouse event here
+keys.log
