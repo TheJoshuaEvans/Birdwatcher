@@ -129,6 +129,9 @@ class StatusChip(Checkbox):
         self.refresh()
 ```
 
+- **A scrolling container with `width: auto` collapses to nothing** (`VerticalScroll` does not size to its content), so a dialog built on one shows as an empty box while tests reading the widget's text still pass. Give it a width (`width: 80; max-width: 95%`), and assert on `widget.region` in a test when on-screen size matters.
+- **`size.width` of a scrolling widget includes its vertical scrollbar**, which is drawn over the last columns. To fit text to the visible width (e.g. a `Tree.render_label` override that right-aligns a marker), subtract `styles.scrollbar_size_vertical` always, whether or not the bar shows, so lines don't shift when it appears.
+- **Rich wraps at a no-break space too.** To keep a `-`/`+` sign beside text that may wrap, put the sign in its own column of a `Table.grid` rather than joining it with `\N{NO-BREAK SPACE}`; give the text column `overflow="fold"` so a long unbroken word (a URL, an anchor) breaks across lines instead of ending in "…".
 - `BINDINGS` (and other mutable class attributes) need `ClassVar[list[BindingType]]` for Ruff's RUF012.
 - `widget.size` excludes the border, `outer_size` includes it, and `styles.width` sets the outer width; mixing them drifts by a column.
 
