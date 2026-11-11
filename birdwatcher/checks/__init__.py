@@ -19,6 +19,7 @@ from birdwatcher.checks import (
     labels,
     links,
     numbering,
+    python_style,
 )
 from birdwatcher.core.check import Check
 
@@ -91,6 +92,17 @@ ALL_CHECKS = (
             "only works on Windows and macOS (the site's server tells them apart)."
         ),
         run=lambda context: links.check_links(context.root, context.site_url),
+    ),
+    Check(
+        id=python_style.CHECK,
+        title="Python style",
+        description=(
+            "Ruff over the course's Python files and notebooks, with the course's "
+            "own rules (GradingAssistant/ruff.toml): the same style the labs are "
+            "graded on. Unused imports, undefined names and syntax errors are "
+            "warnings; the rest is style."
+        ),
+        run=lambda context: python_style.check_python_style(context.root),
     ),
     Check(
         id=external_links.CHECK,

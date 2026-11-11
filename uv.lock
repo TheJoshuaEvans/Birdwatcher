@@ -9,6 +9,7 @@ source = { editable = "." }
 dependencies = [
     { name = "platformdirs" },
     { name = "rich" },
+    { name = "ruff" },
     { name = "textual" },
     { name = "truststore" },
 ]
@@ -16,22 +17,19 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
-    { name = "ruff" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "platformdirs", specifier = ">=4.14.5" },
     { name = "rich", specifier = ">=15.0.0" },
+    { name = "ruff", specifier = ">=0.17.4" },
     { name = "textual", specifier = ">=8.2.8" },
     { name = "truststore", specifier = ">=0.10.5" },
 ]
 
 [package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=9.2.0" },
-    { name = "ruff", specifier = ">=0.17.4" },
-]
+dev = [{ name = "pytest", specifier = ">=9.2.0" }]
 
 [[package]]
 name = "colorama"
