@@ -76,6 +76,20 @@ Button:hover, Button:focus {
     color: $accent;
 }
 
+/* FIND: a flat one-line search box beside its label */
+#find {
+    border: none;
+    height: 1;
+    width: 1fr;
+    padding: 0 1;
+    background: $surface;
+}
+
+#find:focus {
+    background: $boost;
+    text-style: bold;
+}
+
 #chips StatusChip {
     border: none;
     padding: 0 1;

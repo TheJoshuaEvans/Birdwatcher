@@ -40,13 +40,15 @@ from birdwatcher.ui.tui.grouping import Grouping, group_rows
 from birdwatcher.ui.tui.ignore import IgnoreDialog
 from birdwatcher.ui.tui.retro import StatusChip
 from birdwatcher.ui.tui.rows import Row, row_order
+from birdwatcher.ui.tui.search import SearchBox
 from birdwatcher.ui.tui.tree import FindingsTree
 from birdwatcher.ui.tui.watch import WatchStrip
 
 CONTEXT_LINES = 6  # source lines shown above and below a finding
 MIN_PANE_WIDTH = 20  # columns each side keeps when the divider is dragged
 NO_FINDINGS = "No findings. Every check came back clean: all quiet in the canopy."
-ALL_HIDDEN = "Every finding is hidden by the SHOW chips above."
+ALL_HIDDEN = "Every finding is hidden by the SHOW chips or the FIND box above."
+SEARCH_HINT = "type / to search files, messages and checks"
 SEVERITY_CHIP_PREFIX = "show-"  # the severity chips' ids: show-error, show-warning...
 TAB_PREFIX = "by-"  # grouping tab ids: by-check, by-severity, by-folder
 NARROW_WIDTH = 120  # below this many columns, one pane at a time
@@ -111,6 +113,7 @@ class FindingsScreen(Screen):
         Binding("x", "stop", "Stop checking"),
         Binding("s", "app.open_setup", "Setup"),
         Binding("q", "app.quit", "Quit"),
+        Binding("slash", "find", "Find", show=False),
         Binding("minus", "fold_level", "Fold a level", show=False),
         Binding("plus,equals_sign", "unfold_level", "Unfold a level", show=False),
         Binding("1", "toggle_severity('error')", "Errors", show=False),
@@ -180,6 +183,9 @@ class FindingsScreen(Screen):
                         yield Static("", classes="chip-label")
                         yield StatusChip("FIXED 0", value=True, id="show-fixed")
                         yield StatusChip("IGNORED 0", value=False, id="show-ignored")
+                    with Horizontal(classes="chip-row", id="find-row"):
+                        yield Static("FIND", classes="chip-label")
+                        yield SearchBox(placeholder=SEARCH_HINT, id="find")
                 yield FindingsTree(id="findings")
                 yield WatchStrip(id="watch")
             yield Divider("#findings-pane", min_width=MIN_PANE_WIDTH)
@@ -388,6 +394,7 @@ class FindingsScreen(Screen):
                 + (ignored_rows if show_ignored.value else [])
             )
             if row.finding.severity in self._shown_severities
+            and self._matches_search(row)
         ]
 
         count = len(open_rows)
@@ -418,7 +425,8 @@ class FindingsScreen(Screen):
             ),
             keep=keep,
         )
-        tree.focus()
+        if self.focused is not self.query_one("#find", SearchBox):
+            tree.focus()  # but never out of the search box while typing
         if not shown:
             self._show_row(None)
             self._detail().update(NO_FINDINGS if not open_rows else ALL_HIDDEN)
@@ -451,6 +459,33 @@ class FindingsScreen(Screen):
             self._save_severities(self._shown_severities)
         if self._run is not None:
             self._show_rows()
+
+    def _matches_search(self, row):
+        text = self.query_one("#find", SearchBox).value.strip().lower()
+        if not text:
+            return True
+        finding = row.finding
+        where = [
+            finding.path,
+            finding.message,
+            finding.check,
+            self._check_title(finding),
+        ]
+        return text in " ".join(where).lower()
+
+    def action_find(self):
+        self.query_one("#find", SearchBox).focus()
+
+    def on_input_changed(self, event: SearchBox.Changed):
+        if event.input.id == "find" and self._run is not None:
+            self._show_rows()
+
+    def on_input_submitted(self, event: SearchBox.Submitted):
+        if event.input.id == "find":
+            self.query_one(FindingsTree).focus()
+
+    def on_search_box_cleared(self, event: SearchBox.Cleared):
+        self.query_one(FindingsTree).focus()
 
     def _severity_chip(self, severity):
         return self.query_one(f"#{SEVERITY_CHIP_PREFIX}{severity.value}", Checkbox)

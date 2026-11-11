@@ -691,6 +691,80 @@ def test_the_list_opens_with_the_saved_severities(tmp_path):
     drive(app, steps)
 
 
+def search_box(app):
+    return app.screen.query_one("#find", Input)
+
+
+def test_the_find_row_is_always_there_and_says_how_to_use_it(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course)
+
+    async def steps(app, pilot):
+        assert search_box(app).display
+        assert "/" in str(search_box(app).placeholder)
+
+    drive(app, steps)
+
+
+def test_slash_searches_as_you_type_without_triggering_keys(tmp_path):
+    course = make_course(tmp_path / "course")
+    checker = FakeChecker([FIRST, SECOND])
+    app, _ = make_app(tmp_path, checker, course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "slash")
+        assert app.focused is search_box(app)
+        await press(app, pilot, *"second pro")  # holds r and p, which are keys
+        assert [row.split()[-2:] for row in finding_rows(app)] == [
+            ["Second", "problem."]
+        ]
+        assert "1 of 2 findings" in app.sub_title
+        assert app.focused is search_box(app)
+        assert len(checker.folders) == 1  # r did not re-run the checks
+
+    drive(app, steps)
+
+
+@pytest.mark.parametrize(
+    ("text", "files"),
+    [
+        ("b.md", ["B.md"]),
+        ("FIRST", ["A.md"]),
+        ("broken SECTION", ["A.md", "B.md"]),  # the check's title
+        ("links", ["A.md", "B.md"]),  # the check's id
+        ("nothing like it", []),
+    ],
+    ids=["path", "message", "check-title", "check-id", "no-match"],
+)
+def test_search_matches_path_message_and_check_ignoring_case(tmp_path, text, files):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
+
+    async def steps(app, pilot):
+        search_box(app).value = text
+        await settle(app, pilot)
+        shown = [f for f in ("A.md", "B.md") if any(f in r for r in finding_rows(app))]
+        assert shown == files
+
+    drive(app, steps)
+
+
+def test_enter_keeps_the_search_and_escape_clears_it(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "slash", *"b.md", "enter")
+        assert isinstance(app.focused, FindingsTree)
+        assert len(finding_rows(app)) == 1
+        await press(app, pilot, "slash", "escape")
+        assert search_box(app).value == ""
+        assert isinstance(app.focused, FindingsTree)
+        assert len(finding_rows(app)) == 2
+
+    drive(app, steps)
+
+
 def cursor_label(app):
     node = app.screen.query_one(FindingsTree).cursor_node
     return "" if node is None else str(node.label)
