@@ -32,7 +32,9 @@ from textual.widgets import (
     Tree,
 )
 
+from birdwatcher.checks.spelling import word_of
 from birdwatcher.core.config import DEFAULT_SPLIT, SPLIT_RANGE
+from birdwatcher.core.dictionary import DictionaryError, add_words
 from birdwatcher.core.findings import Severity
 from birdwatcher.core.fix_log import FixedFinding, load_fixed, save_fixed
 from birdwatcher.core.fixes import FixError, apply_fix, undo_fix
@@ -67,6 +69,7 @@ BUTTON_ACTIONS = {
     "clear": "clear",
     "ignore": "ignore",
     "unignore": "ignore",
+    "add-word": "add_word",
 }
 STOP_BUTTON = "stop"  # the watch strip's button, which runs action_stop
 
@@ -108,6 +111,7 @@ class FindingsScreen(Screen):
         Binding("u", "undo", "Undo"),
         Binding("c", "clear", "Clear"),
         Binding("i", "ignore", "Ignore / un-ignore"),
+        Binding("a", "add_word", "Add to dictionary"),
         Binding("escape", "unzoom", "Back"),
         Binding("x", "stop", "Stop checking"),
         Binding("question_mark", "show_keys", "Keys"),
@@ -215,6 +219,7 @@ class FindingsScreen(Screen):
                     yield Button(Content("[C] CLEAR"), id="clear")
                     yield Button(Content("[I] IGNORE"), id="ignore")
                     yield Button(Content("[I] UN-IGNORE"), id="unignore")
+                    yield Button(Content("[A] ADD TO DICTIONARY"), id="add-word")
                 # A branch's findings, below its FIX ALL button
                 yield Static(id="branch-list")
         yield Footer()
@@ -558,6 +563,7 @@ class FindingsScreen(Screen):
         fix = finding.fix
         buttons["ignore"].display = row.is_open
         buttons["unignore"].display = row.ignore is not None
+        buttons["add-word"].display = row.is_open and word_of(finding) is not None
         if row.is_open and fix is not None:
             summary.update(_change("Suggested fix (f):", fix))
             summary.display = True
@@ -675,7 +681,22 @@ class FindingsScreen(Screen):
             return self._running and not self._stop_asked.is_set()
         if action == "open_editor":
             return row is not None
+        if action == "add_word":
+            return row is not None and row.is_open and word_of(row.finding) is not None
         return True
+
+    def action_add_word(self):
+        row = self._current()
+        word = None if row is None or not row.is_open else word_of(row.finding)
+        if word is None:
+            return
+        try:
+            written = add_words(self.course_dir, [word])
+        except DictionaryError as error:
+            self.notify(f"Not added: {error}", severity="error")
+            return
+        self.notify(f"Added '{word}' to {written.name}.")
+        self._start_checking()
 
     def action_show_keys(self):
         self.app.push_screen(

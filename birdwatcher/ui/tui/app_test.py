@@ -25,6 +25,7 @@ from textual.widgets import (
 
 from birdwatcher.core.check import Check
 from birdwatcher.core.config import Config, load_config, save_config
+from birdwatcher.core.dictionary import course_words
 from birdwatcher.core.findings import Destination, Finding, Fix, Severity
 from birdwatcher.core.fix_log import FIX_LOG_FILE, load_fixed
 from birdwatcher.core.ignores import IGNORE_FILE, load_ignores
@@ -826,6 +827,62 @@ def test_the_footer_shows_only_what_applies_plus_keys_and_quit(tmp_path):
         assert footer_keys(app) == {"i", "o", "question_mark", "q"}
         await on_check_branch(app, pilot)  # one fix in the branch
         assert footer_keys(app) == {"f", "question_mark", "q"}
+
+    drive(app, steps)
+
+
+TYPO = Finding(
+    "spelling", Severity.ERROR, "docs/A.md", 1, "'Hte' is not in the dictionary."
+)
+
+
+@pytest.mark.parametrize("how", ["key", "button"])
+def test_a_adds_a_misspelled_word_to_the_course_dictionary(tmp_path, how):
+    course = make_course(tmp_path / "course")
+    checker = FakeChecker([TYPO], [])
+    app, _ = make_app(tmp_path, checker, course)
+
+    async def steps(app, pilot):
+        assert "a" in footer_keys(app)
+        if how == "key":
+            await press(app, pilot, "a")
+        else:
+            await pilot.click("#add-word")
+            await settle(app, pilot)
+        assert course_words(course) == {"hte"}
+        assert len(checker.folders) == 2  # checked again
+
+    drive(app, steps)
+
+
+def test_a_does_not_apply_to_other_findings(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course)
+
+    async def steps(app, pilot):
+        assert "a" not in footer_keys(app)
+        assert not is_visible(app, "#add-word")
+        await press(app, pilot, "a")
+        assert not (course / "cspell.json").exists()
+
+    drive(app, steps)
+
+
+def test_an_unreadable_cspell_config_is_reported_and_left_alone(tmp_path):
+    course = make_course(tmp_path / "course")
+    (course / "cspell.json").write_text("{ // comments\n}", encoding="utf-8")
+    checker = FakeChecker([TYPO])
+    app, _ = make_app(tmp_path, checker, course)
+    notes = []  # Textual's notify, recorded: notifications aren't readable otherwise
+
+    async def steps(app, pilot):
+        app.notify = lambda message, **options: notes.append(message)
+        await press(app, pilot, "a")
+        assert (course / "cspell.json").read_text(
+            encoding="utf-8"
+        ) == "{ // comments\n}"
+        assert len(checker.folders) == 1
+        assert any("cspell.json" in note for note in notes)
 
     drive(app, steps)
 

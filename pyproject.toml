@@ -8,7 +8,9 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "codespell>=2.4.3",
     "platformdirs>=4.14.5",
+    "pyspellchecker>=0.9.1",
     "rich>=15.0.0",
     "ruff>=0.17.4",
     "textual>=8.2.8",

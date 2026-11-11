@@ -73,6 +73,7 @@ KEY_GROUPS = (
             Key("c", "clear a fixed finding from the list", ("clear",)),
             Key("C", "clear every fixed finding", ("clear_all",)),
             Key("i", "ignore / un-ignore", ("ignore",)),
+            Key("a", "add a misspelled word to the dictionary", ("add_word",)),
         ),
     ),
     (

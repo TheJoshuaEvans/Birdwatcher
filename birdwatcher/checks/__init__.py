@@ -20,6 +20,7 @@ from birdwatcher.checks import (
     links,
     numbering,
     python_style,
+    spelling,
 )
 from birdwatcher.core.check import Check
 
@@ -103,6 +104,17 @@ ALL_CHECKS = (
             "warnings; the rest is style."
         ),
         run=lambda context: python_style.check_python_style(context.root),
+    ),
+    Check(
+        id=spelling.CHECK,
+        title="Spelling",
+        description=(
+            "Words in the pages and Python files that are not in the dictionary, "
+            "with identifiers split into their words as VS Code's Code Spell "
+            "Checker does. The course's own words live in its cspell.json, which "
+            "both tools read; add one with a. British spellings are noted too."
+        ),
+        run=lambda context: spelling.check_spelling(context.root),
     ),
     Check(
         id=external_links.CHECK,
