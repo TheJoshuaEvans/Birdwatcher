@@ -44,6 +44,7 @@ Tests lock in inputs, outputs and side effects, never internals. Anything the us
 
 - Ruff, configured in `pyproject.toml`, mirrors the course's style checklist. Run `uv run ruff check` and `uv run ruff format` before committing.
 - Course text and error messages go into Rich `Text` objects, never Rich markup, so square brackets show as they are. In Textual, any label or title containing square brackets (`[F] FIX`, `[ FINDINGS ]`) is passed as `textual.content.Content(...)`: a plain string is read as markup, and `[F]` or a whole `[ FINDINGS ]` title silently disappears.
+- Textual's traps, testing patterns and styling techniques, as measured on this project, are in `.claude/skills/textual/SKILL.md`; read it before changing the app or its tests.
 - The look is a retro terminal: double-line frames with `[ TITLES ]`, capitals for chrome (tabs, section headers, buttons, which show their key: `[F] FIX`) but never for paths or messages, and a light touch of bird wording. Styles live in `birdwatcher.tcss`.
 - Severity is always shown as a word, never by color alone.
 - Docstrings describe the contract in present tense. Inline comments only explain something surprising.
