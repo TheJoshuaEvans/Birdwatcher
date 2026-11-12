@@ -45,6 +45,32 @@ def test_site_pages_skip_jekyll_and_hidden_folders(tmp_path):
     ]
 
 
+def test_site_pages_skip_the_folders_jekyll_skips(tmp_path):
+    for path in ("A.md", "node_modules/pkg/README.md", "vendor/gem/B.md", "Labs/C.md"):
+        file = tmp_path / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text("", encoding="utf-8")
+    assert [p.relative_to(tmp_path).as_posix() for p in site_pages(tmp_path)] == [
+        "A.md",
+        "Labs/C.md",
+    ]
+
+
+def test_saved_copies_of_other_sites_pages_are_not_site_pages(tmp_path):
+    for path in (
+        "Notes/Article.html",  # saved with its assets beside it
+        "Notes/Article_files/frame.html",
+        "Labs/Rubric.htm",
+        "Labs/Rubric.fld/sheet.html",  # Microsoft Office's way
+        "Notes/Own.html",
+    ):
+        file = tmp_path / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text("", encoding="utf-8")
+    pages = site_pages(tmp_path, suffixes=(".html", ".htm"))
+    assert [p.relative_to(tmp_path).as_posix() for p in pages] == ["Notes/Own.html"]
+
+
 def test_site_pages_can_include_other_kinds_of_page(tmp_path):
     for path in ("A.md", "Labs/B.html", "_layouts/C.html", "Labs/x.txt"):
         file = tmp_path / path

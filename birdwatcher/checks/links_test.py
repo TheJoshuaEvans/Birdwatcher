@@ -183,7 +183,15 @@ def test_findings_are_in_file_and_line_order(tmp_path):
     assert found == [("docs/A.md", 1), ("docs/B.md", 1), ("docs/B.md", 3)]
 
 
-def test_no_docs_folder_means_no_findings(tmp_path):
+def test_a_course_published_from_its_top_folder_is_checked(tmp_path):
+    page = tmp_path / "Notes" / "Page.md"
+    page.parent.mkdir(parents=True)
+    page.write_text("[gone](Missing.md)\n", encoding="utf-8")
+    [finding] = check_links(tmp_path, SITE)
+    assert (finding.path, finding.line) == ("Notes/Page.md", 1)
+
+
+def test_no_pages_means_no_findings(tmp_path):
     assert check_links(tmp_path, SITE) == []
 
 

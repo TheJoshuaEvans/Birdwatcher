@@ -14,6 +14,10 @@ FRONT_MATTER = re.compile(r"\A---[ \t]*\n(.*?)\n?---[ \t]*(?:\n|\Z)", re.DOTALL)
 FENCE_OPEN = re.compile(r"^[ \t]*(`{3,}|~{3,})")
 FRONT_KEY = re.compile(r"^([A-Za-z_][\w-]*)[ \t]*:[ \t]*(.*?)[ \t]*$")
 
+JEKYLL_SKIPS = frozenset({"node_modules", "vendor"})  # folders Jekyll leaves out
+# Endings of the folder a saved web page's assets go in: a browser's
+# "Page_files", Microsoft Office's "Page.fld"
+SAVED_PAGE_FOLDERS = ("_files", ".fld")
 FRONT, FENCE, CODE, TEXT = "front matter", "fence", "code", "text"  # line kinds
 
 # Links. A target is either <anything but angle brackets> or has no spaces.
@@ -35,12 +39,16 @@ STYLE_OR_SCRIPT = re.compile(
 
 def site_pages(docs, suffixes=(".md",)):
     """
-    The site's pages: every file under docs/ with one of the suffixes (by
-    default its Markdown pages), except in folders whose names start with "_"
-    (Jekyll's own) or "." (hidden).
+    The site's pages: every file under the site folder with one of the
+    suffixes (by default its Markdown pages), except in the folders Jekyll
+    leaves out of a site: names starting with "_" (Jekyll's own) or "."
+    (hidden), node_modules and vendor. Saved copies of other sites' pages
+    are left out too: a folder of a saved page's assets (a browser's
+    "Page_files", Microsoft Office's "Page.fld") and the page saved with
+    one beside it.
 
     Args:
-        docs (Path): The docs/ folder.
+        docs (Path): The site folder (core.course.site_folder).
         suffixes (Sequence[str]): The kinds of page wanted, lowercase with
             the dot, e.g. (".md", ".html").
 
@@ -53,10 +61,20 @@ def site_pages(docs, suffixes=(".md",)):
         if page.suffix.lower() in suffixes
         and page.is_file()
         and not any(
-            part.startswith(("_", ".")) for part in page.relative_to(docs).parts[:-1]
+            part.startswith(("_", ".")) or part in JEKYLL_SKIPS or _is_saved(part)
+            for part in page.relative_to(docs).parts[:-1]
+        )
+        and not any(
+            (page.parent / f"{page.stem}{ending}").is_dir()
+            for ending in SAVED_PAGE_FOLDERS
         )
     )
     return sorted(pages, key=lambda page: page.relative_to(docs).as_posix())
+
+
+def _is_saved(folder):
+    """Whether a folder holds a saved web page's assets."""
+    return folder.endswith(SAVED_PAGE_FOLDERS)
 
 
 def read_page(page):

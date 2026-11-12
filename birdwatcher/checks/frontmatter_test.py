@@ -14,10 +14,18 @@ from birdwatcher.core.findings import Severity
 COMPLETE = '---\ntitle: "Lab 5"\ndescription: ANNs\nauthor: Brian Bird\n---\nBody\n'
 
 
-def write_page(root, text, name="Lab.md"):
+def write_page(root, text, name="Lab.md", jekyll=True):
+    """A page in docs/, in a site configured for Jekyll unless jekyll=False."""
     page = root / "docs" / name
     page.parent.mkdir(parents=True, exist_ok=True)
     page.write_text(text, encoding="utf-8")
+    if jekyll:
+        (root / "docs" / "_config.yml").write_text("title: Course\n", encoding="utf-8")
+
+
+def test_a_site_without_a_jekyll_config_is_not_checked(tmp_path):
+    write_page(tmp_path, "<h1>Lab</h1>\n", jekyll=False)
+    assert check_front_matter(tmp_path) == []
 
 
 def test_a_complete_page_is_fine(tmp_path):

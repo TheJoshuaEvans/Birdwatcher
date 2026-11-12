@@ -11,7 +11,7 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 from pathlib import Path
 
 from birdwatcher.checks.pages import FENCE, TEXT, line_kinds, read_page, site_pages
-from birdwatcher.core.course import DOCS_FOLDER
+from birdwatcher.core.course import site_folder
 from birdwatcher.core.findings import Finding, Fix, Severity
 
 CHECK = "stray-language-label"
@@ -64,7 +64,7 @@ def check_labels(repo_root):
             left empty). Empty when the repository has no docs/ folder.
     """
     repo_root = Path(repo_root).resolve()
-    docs = repo_root / DOCS_FOLDER
+    docs = site_folder(repo_root)
     if not docs.is_dir():
         return []
     findings = []

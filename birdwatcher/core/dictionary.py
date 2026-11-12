@@ -6,8 +6,10 @@ count in both.
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
+import fnmatch
 import json
 import os
+import re
 from pathlib import Path
 
 # cspell's own config file names at a project's root, in the order it looks
@@ -78,6 +80,64 @@ def course_words(repo_root):
     return frozenset(
         word.lower() for key in ("words", "ignoreWords") for word in _listed(data, key)
     )
+
+
+def ignore_paths(repo_root):
+    """
+    The course's cspell "ignorePaths": glob patterns of files the spelling
+    check leaves out (vendored libraries, for example).
+
+    Args:
+        repo_root (Path): The course repository's root folder.
+
+    Returns:
+        tuple[str, ...]: The patterns, in order; empty when there is no
+            config, it cannot be read, or it has none.
+    """
+    try:
+        data = _read(config_path(repo_root))
+    except DictionaryError:
+        return ()
+    return tuple(_listed(data, "ignorePaths"))
+
+
+def is_ignored(path, patterns):
+    """
+    Whether a file matches any of the ignore patterns, read the way cspell
+    reads them: "*" matches within a name, "**" across folders, and a
+    pattern without a slash matches any one folder or file name on the way.
+
+    Args:
+        path (str): The file's path relative to the repository root, with
+            forward slashes.
+        patterns (Iterable[str]): Glob patterns.
+
+    Returns:
+        bool: True when one of them matches.
+    """
+    names = path.split("/")
+    for pattern in patterns:
+        pattern = pattern.strip().lstrip("/")
+        if not pattern:
+            continue
+        if "/" not in pattern:
+            if any(fnmatch.fnmatchcase(name, pattern) for name in names):
+                return True
+        elif _glob_regex(pattern).fullmatch(path):
+            return True
+    return False
+
+
+def _glob_regex(pattern):
+    """A glob with folders as a regular expression: ** crosses folders."""
+    parts = []
+    for piece in re.split(r"(\*\*/|\*\*|\*|\?)", pattern):
+        parts.append(
+            {"**/": "(?:.*/)?", "**": ".*", "*": "[^/]*", "?": "[^/]"}.get(
+                piece, re.escape(piece)
+            )
+        )
+    return re.compile("".join(parts))
 
 
 def add_words(repo_root, words):

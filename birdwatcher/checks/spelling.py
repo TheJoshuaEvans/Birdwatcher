@@ -1,9 +1,10 @@
 """
-Spelling: words in the course's pages and Python files that are not in the
+Spelling: words in the course's pages and code files that are not in the
 dictionary, cspell-style (identifiers are split into their words).
 
 Words come from every line of the site's Markdown pages, code included, and
-of the .py files under docs/; links, HTML and file names are left out. A
+of the code files (.py, .js, .css; not minified ones) in the site folder;
+links, HTML and file names are left out. A
 word is fine when it is in the course's own word list (core.dictionary) or
 in the English dictionary (pyspellchecker). British spellings are noted with
 their American spelling (codespell's list). Suggestions come from codespell's
@@ -22,13 +23,16 @@ from pathlib import Path
 from spellchecker import SpellChecker
 
 from birdwatcher.checks.pages import CODE, FENCE, line_kinds, read_page, site_pages
-from birdwatcher.core.course import DOCS_FOLDER
-from birdwatcher.core.dictionary import course_words
+from birdwatcher.core.course import site_folder
+from birdwatcher.core.dictionary import course_words, ignore_paths, is_ignored
 from birdwatcher.core.findings import Finding, Fix, Severity
 
 CHECK = "spelling"
 MIN_LENGTH = 4  # shorter words are not checked (cspell's default)
 MAX_SUGGESTIONS = 5  # shown in a message
+CODE_FILES = (".py", ".js", ".css")  # read as code, line by line
+MINIFIED = (".min.js", ".min.css")  # machine-written: left out
+MINIFIED_LINE = 1000  # a code file with a longer line counts as minified
 
 FILE_EXTENSIONS = (
     "md|py|html?|ipynb|txt|csv|json|toml|ya?ml|png|jpe?g|gif|svg|pdf|js|css|zip"
@@ -114,7 +118,10 @@ def words_in(line):
 def check_spelling(repo_root):
     """
     Find words not in the dictionary in the site's Markdown pages and the
-    .py files under docs/.
+    code files (CODE_FILES) in the site folder (see pages.site_pages, which
+    also leaves out saved copies of other sites' pages). Left out too: files
+    matching the course's cspell ignorePaths, and minified code (named
+    .min.js or .min.css, or with a line longer than MINIFIED_LINE).
 
     Args:
         repo_root (Path): Root folder of the course repository.
@@ -129,12 +136,12 @@ def check_spelling(repo_root):
               (naming up to MAX_SUGGESTIONS of them).
             A finding has a Fix to the one suggestion (or American spelling),
             in the word's letter case, only when the word is in prose (not a
-            code block, inline code or a .py file), stands alone, and is the
+            code block, inline code or a code file), stands alone, and is the
             first occurrence of that text on its line. Empty when the
-            repository has no docs/ folder.
+            course has no pages.
     """
     repo_root = Path(repo_root).resolve()
-    docs = repo_root / DOCS_FOLDER
+    docs = site_folder(repo_root)
     if not docs.is_dir():
         return []
     known = course_words(repo_root)
@@ -147,8 +154,11 @@ def check_spelling(repo_root):
         return verdicts[key]
 
     findings = []
-    for page in site_pages(docs, suffixes=(".md", ".py")):
+    ignored = ignore_paths(repo_root)
+    for page in site_pages(docs, suffixes=(".md", *CODE_FILES)):
         path = page.relative_to(repo_root).as_posix()
+        if _left_out(page, path, ignored):
+            continue
         for number, line, code_spans in _lines(page):
             for word in words_in(line):
                 found = verdict(word.text)
@@ -187,11 +197,24 @@ def word_of(finding):
     return quoted.group(1) if quoted else None
 
 
+def _left_out(page, path, ignored):
+    """Whether a file is someone else's or machine-written: matched by the
+    course's ignorePaths, or a minified code file (by name, or by a line no
+    person would write). Saved web pages never reach here (see site_pages)."""
+    if is_ignored(path, ignored):
+        return True
+    if page.suffix.lower() not in CODE_FILES:
+        return False
+    if page.name.lower().endswith(MINIFIED):
+        return True
+    return any(len(line) > MINIFIED_LINE for line in read_page(page).split("\n"))
+
+
 def _lines(page):
     """Yield (line number, line, code spans) for a page or file. The spans
     are (start, end) columns of inline code; None means the whole line is code."""
     text = read_page(page)
-    if page.suffix.lower() == ".py":
+    if page.suffix.lower() in CODE_FILES:
         for number, line in enumerate(text.split("\n"), start=1):
             yield number, line, None
         return

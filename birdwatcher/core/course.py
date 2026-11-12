@@ -9,13 +9,28 @@ from pathlib import Path
 
 from birdwatcher.core.run import run_checks
 
-DOCS_FOLDER = "docs"  # the published site's sources; every check reads from here
+DOCS_FOLDER = "docs"  # where a course publishes its site from, when it has one
 ORIGIN_SECTION = '[remote "origin"]'
 GITDIR_PREFIX = "gitdir:"
 GITHUB_REMOTE = re.compile(
     r"^(?:https://(?:[^@/]+@)?|ssh://git@|git@)github\.com[/:]"
     r"(?P<owner>[^/]+)/(?P<name>[^/]+?)(?:\.git)?/?$"
 )
+
+
+def site_folder(course_dir):
+    """
+    The folder a course's site is published from.
+
+    Args:
+        course_dir (Path): The course folder.
+
+    Returns:
+        Path: Its docs/ folder when it has one (GitHub Pages' "/docs"
+            option), otherwise the course folder itself (the "/" option).
+    """
+    docs = Path(course_dir) / DOCS_FOLDER
+    return docs if docs.is_dir() else Path(course_dir)
 
 
 def course_problem(path):
@@ -26,18 +41,19 @@ def course_problem(path):
         path (Path | str): The folder to check. "~" is not expanded.
 
     Returns:
-        str | None: A sentence explaining the problem (no folder there, or no
-            docs/ folder inside it), or None when the folder can be used.
+        str | None: A sentence explaining the problem (no folder there, or
+            no Markdown pages in its site folder, see site_folder), or None
+            when the folder can be used.
     """
     path = Path(path)
     if not path.exists():
         return f"There is no folder at {path}."
     if not path.is_dir():
         return f"{path} is a file, not a folder."
-    if not (path / DOCS_FOLDER).is_dir():
+    if next(site_folder(path).rglob("*.md"), None) is None:
         return (
-            f"{path} has no {DOCS_FOLDER} folder, so it does not look like the "
-            "course repository."
+            f"{path} has no Markdown pages (in {DOCS_FOLDER}/ or anywhere else), "
+            "so it does not look like a course repository."
         )
     return None
 

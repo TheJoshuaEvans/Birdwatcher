@@ -17,7 +17,7 @@ from pathlib import Path
 
 from birdwatcher.checks.pages import page_links, read_page, site_pages
 from birdwatcher.core.check import ignore_progress
-from birdwatcher.core.course import DOCS_FOLDER
+from birdwatcher.core.course import site_folder
 from birdwatcher.core.findings import Destination, Finding, Fix, Severity
 
 CHECK = "dead-external-link"
@@ -72,7 +72,7 @@ def check_external_links(
             about and none of them answered.
     """
     repo_root = Path(repo_root).resolve()
-    docs = repo_root / DOCS_FOLDER
+    docs = site_folder(repo_root)
     if look_up is None or not docs.is_dir():
         return []
     excluded = _exclusions(repo_root)

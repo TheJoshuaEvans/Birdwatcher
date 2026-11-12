@@ -109,7 +109,7 @@ ALL_CHECKS = (
         id=spelling.CHECK,
         title="Spelling",
         description=(
-            "Words in the pages and Python files that are not in the dictionary, "
+            "Words in the pages and code files that are not in the dictionary, "
             "with identifiers split into their words as VS Code's Code Spell "
             "Checker does. The course's own words live in its cspell.json, which "
             "both tools read; add one with a. British spellings are noted too."

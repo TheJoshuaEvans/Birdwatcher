@@ -14,6 +14,8 @@ from birdwatcher.core.dictionary import (
     add_words,
     config_path,
     course_words,
+    ignore_paths,
+    is_ignored,
 )
 
 
@@ -47,6 +49,29 @@ def test_adding_keeps_other_settings_and_one_sorted_copy_of_each_word(tmp_path):
     data = json.loads(config.read_text(encoding="utf-8"))
     assert data["ignorePaths"] == ["build"]
     assert data["words"] == ["Alpha", "beta", "colab", "zeta"]
+
+
+def test_ignore_paths_are_read_from_the_config(tmp_path):
+    assert ignore_paths(tmp_path) == ()
+    (tmp_path / "cspell.json").write_text(
+        json.dumps({"ignorePaths": ["**/ace-builds/**", 7, "Drafts"]}), encoding="utf-8"
+    )
+    assert ignore_paths(tmp_path) == ("**/ace-builds/**", "Drafts")
+
+
+@pytest.mark.parametrize(
+    ("pattern", "path", "ignored"),
+    [
+        ("**/ace-builds/**", "docs/Lessons/ace-builds/src/a.js", True),
+        ("**/ace-builds/**", "docs/Lessons/ace-builder.js", False),
+        ("Drafts", "docs/Drafts/Old.md", True),  # a bare name: any folder or file
+        ("Drafts", "docs/MyDrafts/Old.md", False),
+        ("docs/*.css", "docs/site.css", True),
+        ("*.map", "docs/js/app.js.map", True),
+    ],
+)
+def test_ignored_matches_paths_like_cspell(pattern, path, ignored):
+    assert is_ignored(path, (pattern,)) is ignored
 
 
 def test_ignore_words_count_as_course_words(tmp_path):

@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 from birdwatcher.checks.pages import prose_lines, read_page, site_pages
-from birdwatcher.core.course import DOCS_FOLDER
+from birdwatcher.core.course import site_folder
 from birdwatcher.core.findings import Finding, Fix, Severity
 
 CHECK = "skipped-heading-level"
@@ -40,7 +40,7 @@ def check_headings(repo_root):
             fix. Empty when the repository has no docs/ folder.
     """
     repo_root = Path(repo_root).resolve()
-    docs = repo_root / DOCS_FOLDER
+    docs = site_folder(repo_root)
     if not docs.is_dir():
         return []
     findings = []

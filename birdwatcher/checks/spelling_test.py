@@ -168,6 +168,46 @@ def test_code_is_checked_but_never_fixed(tmp_path, path, text):
     assert finding.fix is None
 
 
+@pytest.mark.parametrize(
+    ("path", "text"),
+    [("docs/app.js", "let datset = load();\n"), ("docs/site.css", ".datset { }\n")],
+    ids=["javascript", "css"],
+)
+def test_javascript_and_css_are_checked_as_code(tmp_path, path, text):
+    write(tmp_path, path, text)
+    finding = only(tmp_path)
+    assert (finding.path, finding.fix) == (path, None)
+    assert finding.message.startswith("'datset'")
+
+
+@pytest.mark.parametrize("name", ["jquery.min.js", "bootstrap.min.css"])
+def test_minified_files_are_left_out(tmp_path, name):
+    write(tmp_path, f"docs/{name}", "datset\n")
+    assert check_spelling(tmp_path) == []
+
+
+def test_a_code_file_with_a_very_long_line_counts_as_minified(tmp_path):
+    write(tmp_path, "docs/tex-chtml.js", "datset\n" + "var a=1;" * 200 + "\n")
+    assert check_spelling(tmp_path) == []
+
+
+def test_a_saved_web_page_s_files_are_left_out(tmp_path):
+    write(tmp_path, "docs/Notes/Article_files/player.js", "let datset = 1;\n")
+    write(tmp_path, "docs/Notes/Article_files/theme.css", ".datset {}\n")
+    write(tmp_path, "docs/Labs/Rubric.fld/stylesheet.css", ".datset {}\n")  # Office's
+    assert check_spelling(tmp_path) == []
+
+
+def test_the_course_s_cspell_ignore_paths_are_followed(tmp_path):
+    (tmp_path / "cspell.json").write_text(
+        json.dumps({"ignorePaths": ["**/ace-builds/**", "Drafts"]}), encoding="utf-8"
+    )
+    write(tmp_path, "docs/Lessons/ace-builds/src/mode-php.js", "datset\n")
+    write(tmp_path, "docs/Drafts/Old.md", "datset\n")
+    write(tmp_path, "docs/Lessons/Page.md", "datset\n")
+    assert [f.path for f in check_spelling(tmp_path)] == ["docs/Lessons/Page.md"]
+
+
 def test_no_fix_when_the_text_comes_earlier_in_the_line(tmp_path):
     write(tmp_path, "docs/Page.md", "Mydatsets and datset.\n")
     findings = [f for f in check_spelling(tmp_path) if f.message.startswith("'datset'")]

@@ -32,8 +32,8 @@ from birdwatcher.core.config import THEME_AUTO
 from birdwatcher.core.course import DOCS_FOLDER, course_problem
 
 SETUP_INTRO = (
-    "Birdwatcher checks a local clone of the course repository: the folder that "
-    f"contains {DOCS_FOLDER}/."
+    "Birdwatcher checks a local clone of a course repository: the folder that "
+    f"holds its pages, in {DOCS_FOLDER}/ or at the top."
 )
 EMPTY_PATH = "Enter the path of the course repository's folder."
 EDITOR_ID_PREFIX = "editor-"

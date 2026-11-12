@@ -16,7 +16,7 @@ from functools import cache
 from pathlib import Path
 
 from birdwatcher.checks.pages import page_links, read_page, site_pages
-from birdwatcher.core.course import DOCS_FOLDER
+from birdwatcher.core.course import site_folder
 from birdwatcher.core.findings import Destination, Finding, Fix, Severity
 
 CHECK = "dead-link"
@@ -67,7 +67,8 @@ def check_links(repo_root, site_url):
 
     Returns:
         list[Finding]: In file and line order, one error per dead target:
-            - outside docs/: says it leads outside the published site;
+            - outside the site folder (core.course.site_folder): says it
+              leads outside the published site;
             - existing only in a different letter case: names the file as it
               is spelled, with a Fix replacing the target with the same
               target spelled that way, whose destination is that file;
@@ -76,7 +77,7 @@ def check_links(repo_root, site_url):
             Empty when the repository has no docs/ folder.
     """
     repo_root = Path(repo_root).resolve()
-    docs = repo_root / DOCS_FOLDER
+    docs = site_folder(repo_root)
     if not docs.is_dir():
         return []
     site_path = urllib.parse.urlsplit(site_url).path if site_url else None
@@ -127,9 +128,10 @@ def _check_target(page, line, target, docs, repo_root, site_url, site_path, name
         )
 
     if not (base / urllib.parse.unquote(path)).resolve().is_relative_to(docs):
+        site_name = f"{docs.relative_to(repo_root).as_posix()}/"
         return report(
-            f"Link '{target}' leads outside the published site (docs/), so it is "
-            "broken on the site."
+            f"Link '{target}' leads outside the published site ({site_name}), so it "
+            "is broken on the site."
         )
     resolved = _resolve(base, path, names_in)
     if resolved.file is None:

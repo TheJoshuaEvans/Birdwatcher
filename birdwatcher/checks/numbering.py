@@ -14,7 +14,7 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-from birdwatcher.core.course import DOCS_FOLDER
+from birdwatcher.core.course import site_folder
 from birdwatcher.core.findings import Finding, Severity
 
 CHECK = "renumbering-leftover"
@@ -58,7 +58,7 @@ def check_numbering(repo_root):
             Empty when the repository has no docs/ folder.
     """
     repo_root = Path(repo_root).resolve()
-    docs = repo_root / DOCS_FOLDER
+    docs = site_folder(repo_root)
     if not docs.is_dir():
         return []
 

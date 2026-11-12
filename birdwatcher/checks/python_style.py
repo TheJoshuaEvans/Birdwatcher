@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ruff.__main__ import find_ruff_bin
 
-from birdwatcher.core.course import DOCS_FOLDER
+from birdwatcher.core.course import site_folder
 from birdwatcher.core.findings import Finding, Fix, Severity
 
 CHECK = "python-style"
@@ -53,7 +53,7 @@ def check_python_style(repo_root):
         RuffError: Ruff failed to run, with what it said.
     """
     repo_root = Path(repo_root).resolve()
-    docs = repo_root / DOCS_FOLDER
+    docs = site_folder(repo_root)
     if not docs.is_dir():
         return []
     command = [find_ruff_bin(), "check", "--output-format", "json", "--no-cache"]

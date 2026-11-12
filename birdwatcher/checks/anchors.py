@@ -22,7 +22,7 @@ from birdwatcher.checks.pages import (
     read_page,
     site_pages,
 )
-from birdwatcher.core.course import DOCS_FOLDER
+from birdwatcher.core.course import site_folder
 from birdwatcher.core.findings import Destination, Finding, Fix, Severity
 
 CHECK = "broken-section-link"
@@ -101,7 +101,7 @@ def check_anchors(repo_root, site_url):
             the section's published address.
     """
     repo_root = Path(repo_root).resolve()
-    docs = repo_root / DOCS_FOLDER
+    docs = site_folder(repo_root)
     if not docs.is_dir():
         return []
 

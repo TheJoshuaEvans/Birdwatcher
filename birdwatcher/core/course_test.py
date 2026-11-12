@@ -14,6 +14,7 @@ from birdwatcher.core.course import (
     course_problem,
     github_repo,
     published_site_url,
+    site_folder,
 )
 from birdwatcher.core.findings import Finding, Severity
 
@@ -52,9 +53,25 @@ def test_a_file_cannot_be_used(tmp_path):
     assert course_problem(file)
 
 
-def test_a_folder_without_docs_cannot_be_used(tmp_path):
+def test_a_folder_without_pages_cannot_be_used(tmp_path):
+    (tmp_path / "notes.txt").write_text("x", encoding="utf-8")
     problem = course_problem(tmp_path)
-    assert problem and "docs" in problem
+    assert problem and "Markdown" in problem
+
+
+def test_a_course_published_from_its_top_folder_can_be_used(tmp_path):
+    (tmp_path / "Labs").mkdir()
+    (tmp_path / "Labs" / "Lab01.md").write_text("# Lab 1\n", encoding="utf-8")
+    assert course_problem(tmp_path) is None
+
+
+def test_the_site_folder_is_docs_when_there_is_one(tmp_path):
+    assert site_folder(make_course(tmp_path)) == tmp_path / "docs"
+
+
+def test_the_site_folder_is_the_course_folder_without_docs(tmp_path):
+    (tmp_path / "Page.md").write_text("# Page\n", encoding="utf-8")
+    assert site_folder(tmp_path) == tmp_path
 
 
 @pytest.mark.parametrize(
