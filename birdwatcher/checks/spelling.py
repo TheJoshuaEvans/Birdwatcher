@@ -5,8 +5,9 @@ dictionary, cspell-style (identifiers are split into their words).
 Words come from every line of the site's Markdown pages, code included, and
 of the code files (.py, .js, .css; not minified ones) in the site folder;
 links, HTML and file names are left out. A
-word is fine when it is in the course's own word list (core.dictionary) or
-in the English dictionary (pyspellchecker). British spellings are noted with
+word is fine when it is in the course's own word list (core.dictionary), in
+the built-in lists of code and software words (words/, from Code Spell
+Checker's dictionaries), or in the English dictionary (pyspellchecker). British spellings are noted with
 their American spelling (codespell's list). Suggestions come from codespell's
 list of common misspellings first, then from dictionary words one edit away
 (an obvious replacement; two edits away would be both far-fetched and slow).
@@ -30,6 +31,9 @@ from birdwatcher.core.findings import Finding, Fix, Severity
 CHECK = "spelling"
 MIN_LENGTH = 4  # shorter words are not checked (cspell's default)
 MAX_SUGGESTIONS = 5  # shown in a message
+# Code and software words every course uses, bundled from Code Spell Checker's
+# dictionaries (see words/README.md)
+WORD_LISTS = "words"
 CODE_FILES = (".py", ".js", ".css")  # read as code, line by line
 MINIFIED = (".min.js", ".min.css")  # machine-written: left out
 MINIFIED_LINE = 1000  # a code file with a longer line counts as minified
@@ -232,9 +236,12 @@ def _verdict(key, known):
     """(severity, options) for a lowercased word, or None when it is fine."""
     if key in known:
         return None
+    # Before the built-in lists: some of them hold British spellings too.
     british = _british().get(key)
     if british:
         return Severity.INFO, british
+    if key in _built_in():
+        return None
     if _english().known([key]):
         return None
     options = _typos().get(key) or _suggestions(key)
@@ -269,6 +276,19 @@ def _same_case(word, replacement):
 @cache
 def _english():
     return SpellChecker(distance=1)
+
+
+@cache
+def _built_in():
+    """Every word of the built-in word lists (words/*.txt), lowercased."""
+    folder = files("birdwatcher.checks").joinpath(WORD_LISTS)
+    return frozenset(
+        word.strip().lower()
+        for item in folder.iterdir()
+        if item.name.endswith(".txt")
+        for word in item.read_text(encoding="utf-8").splitlines()
+        if word.strip()
+    )
 
 
 @cache

@@ -143,6 +143,21 @@ def test_a_british_spelling_is_info_with_the_american_one(tmp_path):
     assert (finding.fix.before, finding.fix.after) == ("colour", "color")
 
 
+@pytest.mark.parametrize(
+    ("path", "text"),
+    [
+        ("docs/lab.py", "if isinstance(values, numpy.ndarray):\n"),
+        ("docs/app.js", "button.onclick = () => localStorage.clear();\n"),
+        ("docs/site.css", ".box { flexbox: none; }\n"),
+        ("docs/Page.md", "Install Jupyter and scikit-learn with pip.\n"),
+    ],
+    ids=["python", "javascript", "css", "software-terms"],
+)
+def test_code_and_software_words_are_built_in(tmp_path, path, text):
+    write(tmp_path, path, text)
+    assert check_spelling(tmp_path) == []
+
+
 def test_the_course_word_list_is_respected(tmp_path):
     (tmp_path / "cspell.json").write_text(
         json.dumps({"words": ["Datset", "colour"]}), encoding="utf-8"
