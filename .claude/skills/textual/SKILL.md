@@ -42,6 +42,8 @@ await pilot.hover(None, offset=destination)
 await pilot.mouse_up(None, offset=destination)
 ```
 
+- **Notifications can't be read in a headless test:** `app.notify` toasts are not in the DOM there, and the app has no public list of them. Replace `app.notify` (or `app.exit`, to test a quit without ending the test) with a recording function inside the test.
+- To restart a flow (for example after resetting all settings): pop screens down to the base (`while len(app.screen_stack) > 1: app.pop_screen()`) and push a fresh one. Popping a screen that was pushed with a result callback does not call the callback.
 - Pass every desktop side effect into the app as a function (open an editor, a browser, a folder picker, a file browser, the system's dark-mode setting), so tests use fakes that record calls, and the real ones are checked by hand.
 - If the environment sets `NO_COLOR`, Textual renders in greyscale (the app gains a `nocolor` pseudo-class). Clear it, and set `COLORTERM=truecolor`, before taking screenshots meant to show color.
 
@@ -138,6 +140,10 @@ class StatusChip(Checkbox):
 ## Bindings and the footer
 
 `check_action` returning False hides a binding from the footer and stops its key, so the footer can list only what applies to the current selection. Call `self.refresh_bindings()` whenever the selection changes.
+
+- **One key, two meanings:** bind the key twice to different actions and let `check_action` enable one at a time; Textual falls through to the next binding for that key when one is disabled, and the footer shows the enabled one's label (`q` = "Back" on a page that can be cancelled, "Quit" on a first run).
+- An action bound on a screen as `"app.quit"` is checked by the *app's* `check_action`, not the screen's; to gate it per screen, give the screen its own action that calls `self.app.exit()`.
+- A focused `Input` takes printable keys before any screen binding, so single-letter shortcuts are safe on a page with a text box (the letter is typed while the box has focus).
 
 ```python
 def check_action(self, action, parameters):
