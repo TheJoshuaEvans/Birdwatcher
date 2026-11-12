@@ -10,9 +10,9 @@ Birdwatcher runs static checks over a local clone of one of Brian Bird's course 
 
 A course's site is published by GitHub Pages either from its `docs/` folder (CS 212, CIS 195, CS 112) or from the repository's top folder (CS 133JS, CS 233JS, CS 246, CS 297); Birdwatcher checks `docs/` when there is one, and the whole repository otherwise, leaving out what Jekyll leaves out (`node_modules/`, `vendor/`, folders starting with `_` or `.`) and saved copies of other sites' pages (a page saved with its `Page_files/` or `Page.fld/` folder).
 
-The course repository already checks that its links resolve, using [lychee](https://lychee.cli.rs/) in GitHub Actions. Birdwatcher looks for what a link checker can't see: links to sections that don't exist, files left over from renumbering, accessibility problems, and code that breaks the course's own style rules.
+Some of the courses already check that their links resolve, using [lychee](https://lychee.cli.rs/) in GitHub Actions. Birdwatcher checks links too, inside the site and out, in every course, and looks for what a link checker can't see: links to sections that don't exist, files left over from renumbering, accessibility problems, spelling, and code that breaks the course's own style rules.
 
-**Status:** early development, as the CS 212 Lab 6 project. It grows into the term project: Lab 7 adds analysis by a large language model, and the term project adds simulated students. Downloading, caching, the app and the first check work; the other checks below are being built.
+**Status:** all ten checks below work, with fixing, ignoring, filtering and a demo mode. Version [`v0.1.0`](https://github.com/TheJoshuaEvans/Birdwatcher/releases/tag/v0.1.0) is the CS 212 Lab 6 submission. Birdwatcher grows into the term project: Lab 7 adds analysis by a large language model, and the term project adds simulated students.
 
 ## Running Birdwatcher
 
@@ -22,7 +22,7 @@ With [uv](https://docs.astral.sh/uv/) installed, one command runs Birdwatcher st
 uvx --from git+https://github.com/TheJoshuaEvans/Birdwatcher birdwatcher
 ```
 
-Add `@` and a tag, branch or commit to run that version instead of the latest, for example `...Birdwatcher@main` or `...Birdwatcher@d4e11d8`. Anything after `birdwatcher` is passed on, so `... birdwatcher check --list-checks` works too. To keep it installed as a `birdwatcher` command, use `uv tool install git+https://github.com/TheJoshuaEvans/Birdwatcher`.
+Add `@` and a tag, branch or commit to run that version instead of the latest, for example `...Birdwatcher@v0.1.0` (the Lab 6 submission) or `...Birdwatcher@main`. Anything after `birdwatcher` is passed on, so `... birdwatcher check --list-checks` works too. To keep it installed as a `birdwatcher` command, use `uv tool install git+https://github.com/TheJoshuaEvans/Birdwatcher`.
 
 ## Setup for development
 
@@ -43,7 +43,11 @@ uv run birdwatcher check --course-dir C:\path\to\CS212-CourseMaterials
 uv run birdwatcher check --list-checks
 ```
 
-The first time the app opens, it asks for the folder of your local clone of a course repository (the folder that holds its pages, in `docs/` or at the top) and remembers it. Type or paste the path, or press **Browse…** (Ctrl+O) to pick it in your system's folder picker. The setup page (`s`) also lists your recent course folders, so switching between courses is one click, and lets you choose the editor that opens files and the color theme (by default, light or dark to match your system; any theme picked with Ctrl+P is remembered too). `birdwatcher check` uses the same folder unless `--course-dir` names another. To look around without a clone of your own, press **Try the demo** on the setup page: Birdwatcher downloads the CS 212 course materials (about 34 MB) into its cache folder, with the course's word list, and opens them with DEMO in the title. The demo is a fixed snapshot of the course (one commit, from November 2026), so it keeps its findings however the real course improves. It is never saved as your course; later demos open the downloaded copy at once, and **Refresh demo** downloads a clean copy again (after trying out fixes in it, say). On the setup page, `q` (outside the path box) or Escape goes back to the course; on a first run, with no course yet, `q` quits. **Reset everything…** on the setup page forgets all of that, along with the fixed and ignored findings, the saved link answers and the downloaded demo, after asking, and starts again as on a first run; course folders are not touched.
+The first time the app opens, it asks for the folder of your local clone of a course repository (the folder that holds its pages, in `docs/` or at the top) and remembers it. Type or paste the path, or press **Browse…** (Ctrl+O) to pick it in your system's folder picker. The setup page (`s`) also lists your recent course folders, so switching between courses is one click, and lets you choose the editor that opens files and the color theme (by default, light or dark to match your system; any theme picked with Ctrl+P is remembered too). On the setup page, `q` (outside the path box) or Escape goes back to the course; on a first run, with no course yet, `q` quits. `birdwatcher check` uses the same folder unless `--course-dir` names another.
+
+**Try the demo** on the setup page looks around without a clone of your own: Birdwatcher downloads the CS 212 course materials (about 34 MB) into its cache folder, with the course's word list, and opens them with DEMO in the title. The demo is a fixed snapshot of the course (one commit, from November 2026), so it keeps its findings however the real course improves. It is never saved as your course; later demos open the downloaded copy at once, and **Refresh demo** downloads a clean copy again (after trying out fixes in it, say).
+
+**Reset everything…** on the setup page forgets everything Birdwatcher keeps (see [What Birdwatcher keeps](#what-birdwatcher-keeps)), after asking, and starts again as on a first run; course folders are not touched.
 
 Findings appear as each check finishes, so the quick checks show at once while a slow one is still running. When checking again, each check's previous findings stay in the list until its new results arrive.
 
@@ -75,16 +79,19 @@ In the app, mouse and keyboard both work. The bottom bar shows the keys for what
 | `r` | Run the checks again, after fixing something |
 | `ctrl+r` | Hard refresh: run the checks again, asking every web site afresh instead of reusing the day's answers |
 | `x`, or **STOP** | Stop a slow check while it runs (its progress shows at the bottom of the list); findings from the checks that finished stay, and `r` checks again |
-| `s` | Choose another course folder |
+| `s` | Choose another course folder, try the demo, or reset everything |
+| `?` | List every key, marking the ones that do not apply right now |
 | `q` | Quit |
 
 ### Fixing
 
-When a check knows the fix, the finding's panel shows it as a before and after, with a **FIX** button. Fixing edits that one line and nothing else, then checks again. Fixed findings stay in the list, marked FIXED, with the change and whether the re-check still reports the problem, so you can confirm each fix with **View in editor** or **View on site** and undo it if it is wrong. Birdwatcher remembers fixed findings per course folder, in `fixes.json` next to its settings, until you clear them. Birdwatcher never commits; `git diff` shows every change it made.
+When a check knows the fix, the finding's panel shows it as a before and after, with a **FIX** button. Fixing edits the lines shown and nothing else (usually one; moving a language label onto its code block changes two, all or nothing), then checks again. Fixed findings stay in the list, marked FIXED, with the change and whether the re-check still reports the problem, so you can confirm each fix with **View in editor** or **View on site** and undo it if it is wrong. Birdwatcher remembers fixed findings per course folder, in `fixes.json` next to its settings, until you clear them. Birdwatcher never commits; `git diff` shows every change it made.
 
 ### Ignoring
 
 Any finding can be ignored, with an optional reason ("kept for last term's students"); ignoring an error asks for confirmation first, because readers are affected. Ignored findings leave the list, and the subtitle counts them; `h` shows them again, with their reasons, and `i` brings one back. Ignores are remembered per course folder in `ignored.json` next to the settings. An ignore matches a finding by its check, file and message rather than its line, so it still applies after lines are added or removed above it.
+
+### Editors
 
 Files open in the editor chosen on the setup page:
 
@@ -98,11 +105,25 @@ Files open in the editor chosen on the setup page:
 
 Birdwatcher reads the course from a local clone, so it sees edits before they are committed: fix a problem, press `r`, and the finding is gone. The chosen folder is saved in `config.json` in your user config folder (on Windows, under `%LOCALAPPDATA%\birdwatcher`).
 
-Pages sometimes link to their own sections with the published site's full address (`https://lcc-cit.github.io/...`). Birdwatcher works out that address from the clone's `origin` remote on GitHub, reading the git config directly, so git itself is not needed. Submodule checkouts work too.
+Pages sometimes link to their own sections with the published site's full address (`https://lcc-cit.github.io/...`). Birdwatcher works out that address from the clone's `origin` remote on GitHub, reading the git config directly, so git itself is not needed. Submodule checkouts work too, and the demo's copy (which has no git folder) names its repository in a small `.birdwatcher-repo` file.
+
+### What Birdwatcher keeps
+
+Everything Birdwatcher keeps is in its own folders, never in a course (except the words you add to a course's `cspell.json`):
+
+| What | Where |
+|---|---|
+| Settings: the course folder, recent courses, editor, theme, split, shown severities | `config.json` in your user config folder (on Windows, `%LOCALAPPDATA%\birdwatcher`) |
+| Fixed findings, per course folder | `fixes.json`, next to the settings |
+| Ignored findings and their reasons, per course folder | `ignored.json`, next to the settings |
+| Answers from web sites, for a day | `links.json`, next to the settings |
+| The downloaded demo course | `demo/` in your user cache folder (on Windows, `%LOCALAPPDATA%\birdwatcher\Cache`) |
+
+**Reset everything…** on the setup page deletes all of these.
 
 ### Findings
 
-Checks produce findings as plain data: the check, the severity, the file and line, and a message. The app and `birdwatcher check` are two views of the same findings, built with [Textual](https://textual.textualize.io/) and [Rich](https://rich.readthedocs.io/). In `birdwatcher check --verbose`, each file and line number is a `vscode://` link that opens it in VS Code.
+Checks produce findings as plain data: the check, the severity, the file and line, a message, and a fix when the check knows one. The app and `birdwatcher check` are two views of the same findings, built with [Textual](https://textual.textualize.io/) and [Rich](https://rich.readthedocs.io/). In `birdwatcher check --verbose`, each file and line number is a `vscode://` link that opens it in VS Code.
 
 ## Checks
 
@@ -115,10 +136,11 @@ Checks produce findings as plain data: the check, the severity, the file and lin
 - [x] **Dead links:** links and images, in Markdown and HTML pages, that lead to nothing on the published site: missing pages and files (with a "did you mean" when a file has a close name), paths outside the published site, and paths whose letter case only works on Windows and macOS, because the site's server tells `Images/` and `images/` apart (fixable: the path is spelled as the file is).
 - [x] **Spelling:** words in the pages (prose and code) and the course's code files (`.py`, `.js`, `.css`) that are not in the dictionary, leaving out minified code (`.min.js`, or any line over 1,000 characters) and whatever the course's `cspell.json` lists in `ignorePaths` (such as a library the course ships), with identifiers split into their words as VS Code's Code Spell Checker does (`maxLength` and `max_length` are checked as "max" and "length"); links, HTML, file names and words with letters outside English are left out. A word with one obvious correction (a known typo, or the only word one letter away) is a warning, fixable in prose (never in code, where it could rename an identifier); a word with none or several is an error; a British spelling is info, fixable to the American one. Code and software words (Python, JavaScript, HTML, CSS, data science, companies' names) are built in, from the MIT-licensed dictionaries Code Spell Checker itself uses, plus a short list of Birdwatcher's own (see `birdwatcher/checks/words/`). A course's own words (people's names, its terms and variable names) live in its `cspell.json`, the file Code Spell Checker reads too; `a` adds a word to it.
 - [x] **Dead links to other sites:** asked about over the network, in the background with progress at the bottom of the list (`x` stops it). Errors: pages that are gone (404, 410), server errors (5xx), and addresses nothing answers. Info: sites that turn automated checks away (401, 403, 429, other 4xx; open them in a browser to be sure), and pages that moved permanently to a different address (fixable: the link gets the new address; moves that only add `https`, `www.` or a trailing `/` are skipped). Addresses in the course's `.lycheeignore` or `lychee.toml` `exclude` list are skipped, as are `localhost` addresses. Birdwatcher asks each server about at most two pages at a time, identifies itself as a link checker, and keeps answers for a day in `links.json` next to its settings (server errors and failures are asked again on the next run).
-- [x] **Python style:** [Ruff](https://docs.astral.sh/ruff/) over the `.py` files and Jupyter notebooks in the published site, with the course's own rules (`GradingAssistant/ruff.toml`, the ones the labs are graded on; otherwise a `ruff.toml` at the repository root, or whatever settings Ruff finds near the files). Unused imports, undefined names and syntax errors are warnings; the rest is style (info). Notebook findings name the cell. Fixable when Ruff's own fix is safe and changes one line of a `.py` file (on the course today: stray whitespace). Ruff comes with Birdwatcher, and leaves no cache in the course folder.
+- [x] **Python style:** [Ruff](https://docs.astral.sh/ruff/) over the `.py` files and Jupyter notebooks in the published site, with the course's own rules (`GradingAssistant/ruff.toml`, the ones the labs are graded on; otherwise a `ruff.toml` at the repository root, or whatever settings Ruff finds near the files). Unused imports, undefined names and syntax errors are warnings; the rest is style (info). Notebook findings name the cell. Fixable when Ruff's own fix is safe and changes one line of a `.py` file (on CS 212 today: stray whitespace). Ruff comes with Birdwatcher, and leaves no cache in the course folder.
 
 ### Ideas for later
 
+- A view of all your courses at once (which ones need attention), and a word list for each course.
 - Python code blocks that don't parse, ignoring `>>>` prompts and deliberate placeholders such as `???`.
 - Lab self-numbering: page titles and main headings that name a different lab than their folder.
 - Lab completeness: every lab has its instructions, code review form and rubric, and none of them only as a draft.
@@ -141,9 +163,10 @@ Checks produce findings as plain data: the check, the severity, the file and lin
 
 | Folder | Holds |
 |---|---|
-| `birdwatcher/core/` | Findings, the check interface, running checks over a course folder, and the saved settings. No user interface code. |
-| `birdwatcher/checks/` | One module per check, and the registry of all checks. |
-| `birdwatcher/ui/` | Console output for `birdwatcher check`, desktop integrations (VS Code, the folder picker), and the Textual app in `ui/tui/`, one module per screen, styled by `birdwatcher.tcss`. |
+| `birdwatcher/core/` | Findings and fixes, the check interface, running checks over a course folder, the saved settings, a course's word list, asking web sites about links, and the demo download. No user interface code. |
+| `birdwatcher/checks/` | One module per check, and the registry of all checks; `checks/words/` holds the built-in spelling word lists. |
+| `birdwatcher/ui/` | Console output for `birdwatcher check`, desktop integrations (VS Code, the folder picker), and the Textual app in `ui/tui/`, one module per screen or dialog, styled by `birdwatcher.tcss`. |
+| `tools/` | Development scripts, such as refreshing the built-in word lists. |
 
 Dependencies point inward, from `ui` to `checks` to `core`, and a test enforces it. [AGENTS.md](AGENTS.md) has the full working rules: the layers, test-first development, and where new checks, screens and settings go.
 
