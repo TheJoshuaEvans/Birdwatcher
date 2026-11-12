@@ -112,6 +112,7 @@ def _check_target(page, line, target, docs, repo_root, site_url, site_path, name
     rest = target[len(prefix) :]
     path = re.split(r"[?#]", rest, maxsplit=1)[0]
     tail = rest[len(path) :]
+    path = path.replace("\\", "/")  # browsers read a backslash as a slash
     if not path:
         return None
 

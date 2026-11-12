@@ -10,7 +10,8 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 import re
 
 FRONT_MATTER = re.compile(r"\A---[ \t]*\n(.*?)\n?---[ \t]*(?:\n|\Z)", re.DOTALL)
-FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+# Any indentation: a fence nested in a list item sits deeper than three spaces.
+FENCE_OPEN = re.compile(r"^[ \t]*(`{3,}|~{3,})")
 FRONT_KEY = re.compile(r"^([A-Za-z_][\w-]*)[ \t]*:[ \t]*(.*?)[ \t]*$")
 
 FRONT, FENCE, CODE, TEXT = "front matter", "fence", "code", "text"  # line kinds
@@ -26,7 +27,10 @@ HTML_ATTRIBUTE = re.compile(
     r"""\b(?:href|src)\s*=\s*["'](?P<bare>[^"']+)["']""", re.IGNORECASE
 )
 INLINE_CODE = re.compile(r"(`+)(.+?)\1")
-STYLE_OR_SCRIPT = re.compile(r"<(style|script)\b.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
+# Blocks of an HTML page that hold no links: styles, scripts, and code examples
+STYLE_OR_SCRIPT = re.compile(
+    r"<(style|script|pre|code)\b.*?</\1\s*>", re.IGNORECASE | re.DOTALL
+)
 
 
 def site_pages(docs, suffixes=(".md",)):
@@ -94,7 +98,7 @@ def line_kinds(text):
         line = lines[index]
         if fence is not None:
             closing = re.match(
-                rf"^ {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*$", line
+                rf"^[ \t]*{re.escape(fence[0])}{{{len(fence)},}}[ \t]*$", line
             )
             kinds[index] = FENCE if closing else CODE
             if closing:
@@ -134,7 +138,8 @@ def page_links(text, html=False):
     Args:
         text (str): The page's text, as from read_page.
         html (bool): True for an HTML page: only href and src attributes
-            count, outside <style> and <script> blocks, and Markdown syntax
+            count, outside <style>, <script>, <pre> and <code> blocks (code
+            examples show links, they are not links), and Markdown syntax
             means nothing.
 
     Returns:

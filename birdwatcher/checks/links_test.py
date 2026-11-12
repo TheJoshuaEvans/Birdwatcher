@@ -56,6 +56,7 @@ def link_from_notes(root, target, site_url=SITE):
         f"{SITE}Notes/Page.html",
         f"{SITE}Labs/",
         "/CS212-CourseMaterials/Notes/Images/chart.png",
+        "Images\\chart.png",  # browsers read a backslash as a slash
     ],
 )
 def test_links_to_what_exists_are_fine(tmp_path, target):

@@ -68,6 +68,22 @@ def test_line_kinds_tell_front_matter_fences_code_and_text_apart():
     assert kinds == [FRONT] * 4 + [TEXT, TEXT, FENCE, CODE, FENCE, TEXT, TEXT]
 
 
+def test_a_fence_inside_a_list_item_may_be_indented_deeper():
+    text = (
+        '1. Add this:\n\n      ```html\n      <link href="a.css">\n      ```\n\nDone.\n'
+    )
+    assert [kind for kind, _ in line_kinds(text)] == [
+        TEXT,
+        TEXT,
+        FENCE,
+        CODE,
+        FENCE,
+        TEXT,
+        TEXT,
+        TEXT,
+    ]
+
+
 def test_an_unclosed_fence_runs_to_the_end():
     kinds = [kind for kind, _ in line_kinds("text\n```\ncode\nmore")]
     assert kinds == [TEXT, FENCE, CODE, CODE]
@@ -148,6 +164,15 @@ def test_page_links_finds_links_and_images(line, targets):
 )
 def test_page_links_leaves_out_what_is_not_a_link(text, expected):
     assert page_links(text) == expected
+
+
+def test_page_links_in_html_leave_out_code_examples():
+    text = (
+        '<pre class="md-fences">&lt;link href="mobile.css"&gt;\n'
+        '<span>&lt;img src="x.png"&gt;</span></pre>\n'
+        '<p>Use <code>href="landscape.css"</code> or <a href="real.html">this</a></p>\n'
+    )
+    assert page_links(text, html=True) == [(3, "real.html")]
 
 
 def test_page_links_in_html_reads_only_attributes_outside_styles_and_scripts():
