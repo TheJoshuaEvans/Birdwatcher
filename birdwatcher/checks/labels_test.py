@@ -10,7 +10,7 @@ import sys
 import pytest
 
 from birdwatcher.checks.labels import CHECK, check_labels
-from birdwatcher.core.findings import Fix, Severity
+from birdwatcher.core.findings import Edit, Fix, Severity
 from birdwatcher.core.fixes import apply_fix
 
 
@@ -32,6 +32,38 @@ def test_a_label_right_above_a_code_block_is_reported_with_a_fix(tmp_path):
     )
     assert "Python" in finding.message
     assert finding.fix == Fix(line=3, before="Python", after="")
+
+
+@pytest.mark.parametrize(
+    ("text", "fence_line", "fence", "tagged"),
+    [
+        ("Python\n```\nx = 1\n```\n", 2, "```", "```python"),
+        ("Bash\n\n\n````\nls\n````\n", 4, "````", "````bash"),
+        ("PowerShell\n  ~~~\ndir\n  ~~~\n", 2, "~~~", "~~~powershell"),
+        ("C#\n```\nx;\n```\n", 2, "```", "```csharp"),
+        ("Terminal\n```\n$ ls\n```\n", 2, "```", "```console"),
+        ("Output\n```\n42\n```\n", 2, "```", "```text"),
+    ],
+    ids=["python", "longer-fence", "tilde-indented", "c-sharp", "terminal", "output"],
+)
+def test_a_label_above_a_bare_fence_moves_onto_the_fence(
+    tmp_path, text, fence_line, fence, tagged
+):
+    write_page(tmp_path, text)
+    [finding] = check_labels(tmp_path)
+    label = text.split("\n")[0].strip()
+    assert finding.fix == Fix(
+        line=1, before=label, after="", also=(Edit(fence_line, fence, tagged),)
+    )
+    assert "highlight" in finding.message
+
+
+def test_moving_the_label_gives_the_block_its_language(tmp_path):
+    page = write_page(tmp_path, "")
+    page.write_bytes(b"Intro\r\nPython\r\n```\r\nx = 1\r\n```\r\n")
+    [finding] = check_labels(tmp_path)
+    apply_fix(page, finding.fix)
+    assert page.read_bytes() == b"Intro\r\n\r\n```python\r\nx = 1\r\n```\r\n"
 
 
 def test_blank_lines_between_label_and_code_block_still_count(tmp_path):

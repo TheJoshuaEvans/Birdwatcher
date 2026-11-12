@@ -6,6 +6,7 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 
 import asyncio
 import io
+import re
 import sys
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -27,7 +28,7 @@ from birdwatcher.core.check import Check
 from birdwatcher.core.config import Config, load_config, save_config
 from birdwatcher.core.demo import DemoError
 from birdwatcher.core.dictionary import course_words
-from birdwatcher.core.findings import Destination, Finding, Fix, Severity
+from birdwatcher.core.findings import Destination, Edit, Finding, Fix, Severity
 from birdwatcher.core.fix_log import FIX_LOG_FILE, load_fixed
 from birdwatcher.core.ignores import IGNORE_FILE, load_ignores
 from birdwatcher.core.run import CheckResult, RunResult
@@ -1860,6 +1861,30 @@ async def on_check_branch(app, pilot):
     tree = app.screen.query_one(FindingsTree)
     tree.move_cursor(tree.root.children[0])
     await settle(app, pilot)
+
+
+TWO_LINE_FIX = replace(
+    FIXABLE, fix=Fix(3, "broken", "fixed", also=(Edit(1, "one", "uno"),))
+)
+
+
+@pytest.mark.parametrize("where", ["finding", "branch"])
+def test_a_fix_on_two_lines_shows_both_with_their_lines(tmp_path, where):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([TWO_LINE_FIX]), course)
+
+    async def steps(app, pilot):
+        if where == "branch":
+            await on_check_branch(app, pilot)
+        lines = [" ".join(line.split()) for line in panel_text(app).splitlines()]
+        # Each change shows its line, wherever the label sits beside the sign
+        assert {"- broken", "+ fixed", "- one", "+ uno"} <= {
+            re.sub(r"line \d+: ", "", line) for line in lines
+        }
+        assert any("line 1" in line for line in lines)
+        assert any("line 3" in line for line in lines)
+
+    drive(app, steps)
 
 
 def test_a_highlighted_branch_summarizes_its_findings(tmp_path):

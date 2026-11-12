@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from birdwatcher.core.findings import Destination, Finding, Fix, Severity
+from birdwatcher.core.findings import Destination, Edit, Finding, Fix, Severity
 from birdwatcher.core.fix_log import FixedFinding, load_fixed, save_fixed
 
 WHEN = datetime(2026, 11, 10, 12, 30, tzinfo=UTC)
@@ -44,6 +44,18 @@ def test_saved_fixes_load_back(tmp_path):
     course = tmp_path / "course"
     save_fixed(log, course, [FIXED, PLAIN])
     assert load_fixed(log, course) == [FIXED, PLAIN]
+
+
+def test_a_fix_with_further_edits_loads_back(tmp_path):
+    log = tmp_path / "fixes.json"
+    course = tmp_path / "course"
+    fix = Fix(1, "Python", "", also=(Edit(3, "```", "```python"),))
+    fixed = FixedFinding(
+        Finding("stray-language-label", Severity.WARNING, "docs/P.md", 1, "m", fix),
+        WHEN,
+    )
+    save_fixed(log, course, [fixed])
+    assert load_fixed(log, course) == [fixed]
 
 
 def test_each_course_folder_has_its_own_fixes(tmp_path):

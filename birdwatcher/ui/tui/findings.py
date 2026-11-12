@@ -904,13 +904,14 @@ class FindingsScreen(Screen):
                 if finding.fix is not None:
                     # The sign sits in the line column, so it stays beside its
                     # text however the text folds.
-                    for sign, text, color in (
-                        ("-", finding.fix.before, "red"),
-                        ("+", finding.fix.after, "green"),
-                    ):
-                        grid.add_row(
-                            "", Text(sign, style=color), Text(text, style=color)
-                        )
+                    for where, before, after in _fix_edits(finding.fix):
+                        for sign, text, color in (
+                            ("-", before, "red"),
+                            ("+", after, "green"),
+                        ):
+                            shown = Text(where, style="dim")
+                            shown.append(text, style=color)
+                            grid.add_row("", Text(sign, style=color), shown)
             parts += [grid, Text("")]
         return Group(*parts)
 
@@ -968,10 +969,25 @@ def _site_url(row):
     return None if destination is None else destination.url
 
 
+def _fix_edits(fix):
+    """A fix's edits as (where, before, after): where is "line N: " when the
+    fix changes more than one line, else ""."""
+    edits = [(fix.line, fix.before, fix.after)]
+    edits += [(edit.line, edit.before, edit.after) for edit in fix.also]
+    several = len(edits) > 1
+    return [
+        (f"line {line}: " if several else "", before, after)
+        for line, before, after in edits
+    ]
+
+
 def _change(title, fix):
-    """A fix's change as two lines, before and after, marked - and +."""
+    """A fix's change, line by line: before and after, marked - and +."""
     change = Text()
     change.append(f"{title}\n", style="bold")
-    change.append(f"- {fix.before}\n", style="red")
-    change.append(f"+ {fix.after}\n", style="green")
+    for where, before, after in _fix_edits(fix):
+        change.append(where, style="dim")
+        change.append(f"- {before}\n", style="red")
+        change.append(where, style="dim")
+        change.append(f"+ {after}\n", style="green")
     return change

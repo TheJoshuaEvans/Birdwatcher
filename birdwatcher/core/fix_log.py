@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from birdwatcher.core.course_store import read_entries, write_entries
-from birdwatcher.core.findings import Destination, Finding, Fix, Severity
+from birdwatcher.core.findings import Destination, Edit, Finding, Fix, Severity
 
 FIX_LOG_FILE = "fixes.json"
 
@@ -87,6 +87,10 @@ def _to_json(entry):
                 "line": destination.line,
                 "url": destination.url,
             },
+            "also": [
+                {"line": edit.line, "before": edit.before, "after": edit.after}
+                for edit in fix.also
+            ],
         },
         "fixed_at": entry.fixed_at.isoformat(),
     }
@@ -113,6 +117,11 @@ def _from_json(data):
                 if destination is None
                 else Destination(
                     destination["path"], destination["line"], destination["url"]
+                ),
+                # Logs from before multi-line fixes have no "also"
+                also=tuple(
+                    Edit(edit["line"], edit["before"], edit["after"])
+                    for edit in fix.get("also", [])
                 ),
             ),
         ),

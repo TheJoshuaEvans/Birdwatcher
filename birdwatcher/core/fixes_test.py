@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from birdwatcher.core.findings import Fix
+from birdwatcher.core.findings import Edit, Fix
 from birdwatcher.core.fixes import FixError, apply_fix, undo_fix
 
 ORIGINAL = "# Café\r\n[a](#bad) and [b](#bad)\r\n[c](#bad)\r\nlast line, no newline"
@@ -62,6 +62,27 @@ def test_undo_refuses_when_the_line_changed_since_the_fix(tmp_path):
     with pytest.raises(FixError, match="#good"):
         undo_fix(file, FIX)
     assert file.read_bytes() == ORIGINAL.encode("utf-8")
+
+
+TWO_LINES = Fix(1, "Python", "", also=(Edit(3, "```", "```python"),))
+
+
+def test_a_fix_with_further_edits_changes_every_line(tmp_path):
+    file = tmp_path / "Page.md"
+    file.write_bytes(b"Python\r\n\r\n```\r\nx = 1\r\n```\r\n")
+    apply_fix(file, TWO_LINES)
+    assert file.read_bytes() == b"\r\n\r\n```python\r\nx = 1\r\n```\r\n"
+    undo_fix(file, TWO_LINES)
+    assert file.read_bytes() == b"Python\r\n\r\n```\r\nx = 1\r\n```\r\n"
+
+
+def test_a_fix_with_further_edits_is_all_or_nothing(tmp_path):
+    file = tmp_path / "Page.md"
+    original = b"Python\n\n~~~\nx = 1\n~~~\n"  # line 3 no longer holds ```
+    file.write_bytes(original)
+    with pytest.raises(FixError):
+        apply_fix(file, TWO_LINES)
+    assert file.read_bytes() == original
 
 
 if __name__ == "__main__":

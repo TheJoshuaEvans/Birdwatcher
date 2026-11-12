@@ -19,7 +19,8 @@ class FixError(Exception):
 def apply_fix(file, fix):
     """
     Apply a fix: replace the first occurrence of fix.before on fix.line with
-    fix.after.
+    fix.after, and likewise for each edit in fix.also. Every line is checked
+    before any is changed, so a fix applies wholly or not at all.
 
     Args:
         file (Path): The finding's file.
@@ -29,13 +30,13 @@ def apply_fix(file, fix):
         FixError: The file has no such line, or the line does not contain
             fix.before. The file is then left unchanged.
     """
-    _replace_on_line(Path(file), fix.line, fix.before, fix.after)
+    _replace_lines(Path(file), _edits(fix))
 
 
 def undo_fix(file, fix):
     """
     Undo a fix: replace the first occurrence of fix.after on fix.line with
-    fix.before.
+    fix.before, and likewise for each edit in fix.also, wholly or not at all.
 
     Args:
         file (Path): The finding's file.
@@ -46,19 +47,30 @@ def undo_fix(file, fix):
             fix.after (it changed since the fix). The file is then left
             unchanged.
     """
-    _replace_on_line(Path(file), fix.line, fix.after, fix.before)
+    _replace_lines(Path(file), _edits(fix, undo=True))
 
 
-def _replace_on_line(file, line, old, new):
+def _edits(fix, undo=False):
+    """A fix's (line, old, new) replacements: its own line, then `also`;
+    undoing swaps old and new."""
+    edits = [(fix.line, fix.before, fix.after)]
+    edits += [(edit.line, edit.before, edit.after) for edit in fix.also]
+    return [(line, new, old) for line, old, new in edits] if undo else edits
+
+
+def _replace_lines(file, edits):
     # Bytes in and out, so line endings and encoding come back exactly as found.
     # Lines are split on "\n" only (as the checks count them): splitlines()
     # would also split on form feeds and Unicode line separators.
     lines = file.read_bytes().decode("utf-8").split("\n")
-    if not 1 <= line <= len(lines):
-        raise FixError(f"{file.name} has no line {line} any more.")
-    if old not in lines[line - 1]:
-        raise FixError(f"Line {line} of {file.name} no longer contains '{old}'.")
-    lines[line - 1] = lines[line - 1].replace(old, new, 1)
+    # Every line is checked before any is changed: all or nothing.
+    for line, old, _ in edits:
+        if not 1 <= line <= len(lines):
+            raise FixError(f"{file.name} has no line {line} any more.")
+        if old not in lines[line - 1]:
+            raise FixError(f"Line {line} of {file.name} no longer contains '{old}'.")
+    for line, old, new in edits:
+        lines[line - 1] = lines[line - 1].replace(old, new, 1)
     # Write beside the file, then swap it in, so a failure never leaves half a file.
     temporary = file.with_name(f".{file.name}.birdwatcher-fix")
     temporary.write_bytes("\n".join(lines).encode("utf-8"))

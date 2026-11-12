@@ -37,20 +37,38 @@ class Destination:
 
 
 @dataclass(frozen=True)
+class Edit:
+    """A text replacement on one line.
+
+    Attributes:
+        line: 1-based line in the file.
+        before: The exact text on that line to replace (its first occurrence).
+        after: The text to put in its place.
+    """
+
+    line: int
+    before: str
+    after: str
+
+
+@dataclass(frozen=True)
 class Fix:
-    """A one-line text replacement that resolves a finding.
+    """A text replacement that resolves a finding: one line, plus any further
+    lines in `also`, applied together (all or none).
 
     Attributes:
         line: 1-based line in the finding's file.
         before: The exact text on that line to replace (its first occurrence).
         after: The text to put in its place.
         destination: Where the fixed link leads, for fixes to links; else None.
+        also: Edits on other lines that belong to the same fix.
     """
 
     line: int
     before: str
     after: str
     destination: Destination | None = None
+    also: tuple[Edit, ...] = ()
 
 
 @dataclass(frozen=True)
