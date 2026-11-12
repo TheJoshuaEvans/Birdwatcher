@@ -1,6 +1,7 @@
 """
-The demo course: a downloaded copy of the CS 212 course materials, for trying
-Birdwatcher without cloning a repository. It lives in Birdwatcher's cache
+The demo course: a downloaded copy of the CS 212 course materials as they were
+at one commit (DEMO_COMMIT), for trying Birdwatcher without cloning a
+repository. It lives in Birdwatcher's cache
 folder, apart from real courses.
 
 Joshua Evans, 2026-11-12 (written with Claude Opus 5.5)
@@ -16,7 +17,10 @@ from pathlib import Path
 from birdwatcher.core.course import REPO_MARKER
 
 DEMO_REPO = "lcc-cit/CS212-CourseMaterials"
-DEMO_URL = f"https://codeload.github.com/{DEMO_REPO}/zip/refs/heads/main"
+# Pinned to one commit (2026-11-11), not a branch: as the instructor fixes
+# what Birdwatcher finds, the demo still has findings to show.
+DEMO_COMMIT = "8e93b0a13b654808ee311748a280096d8ed2db77"
+DEMO_URL = f"https://codeload.github.com/{DEMO_REPO}/zip/{DEMO_COMMIT}"
 DEMO_FOLDER = "CS212-CourseMaterials"
 USER_AGENT = "Birdwatcher demo download"
 CHUNK = 256 * 1024  # bytes read between progress reports

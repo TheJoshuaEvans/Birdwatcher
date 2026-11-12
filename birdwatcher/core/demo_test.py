@@ -5,6 +5,7 @@ Joshua Evans, 2026-11-12 (written with Claude Opus 5.5)
 """
 
 import io
+import re
 import sys
 import zipfile
 
@@ -51,6 +52,12 @@ def test_downloading_unpacks_the_course_and_names_its_repository(tmp_path):
     assert demo.ready()
     assert fetch.urls == [DEMO_URL]
     assert github_repo(folder) == DEMO_REPO
+
+
+def test_the_demo_is_pinned_to_one_commit_of_the_course():
+    # A branch would follow the instructor's fixes; a commit keeps the
+    # demo's findings to show.
+    assert re.search(r"/zip/[0-9a-f]{40}$", DEMO_URL)
 
 
 def test_the_demo_comes_with_the_course_s_word_list(tmp_path):
