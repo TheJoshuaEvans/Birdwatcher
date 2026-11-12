@@ -25,6 +25,7 @@ from textual.widgets import (
 
 from birdwatcher.core.check import Check
 from birdwatcher.core.config import Config, load_config, save_config
+from birdwatcher.core.demo import DemoError
 from birdwatcher.core.dictionary import course_words
 from birdwatcher.core.findings import Destination, Finding, Fix, Severity
 from birdwatcher.core.fix_log import FIX_LOG_FILE, load_fixed
@@ -76,6 +77,30 @@ class FakeChecker:
         return RunResult(course_dir, datetime(2026, 11, 10, tzinfo=UTC), results)
 
 
+class FakeDemo:
+    """Stands in for core.demo.DemoCourse: downloading makes a course folder
+    (or raises `failure`); records how many downloads were asked for."""
+
+    def __init__(self, cache, ready=False, failure=None):
+        self.folder = cache / "demo" / "CS212-CourseMaterials"
+        self.failure = failure
+        self.downloads = 0
+        if ready:
+            make_course(self.folder)
+
+    def ready(self):
+        return self.folder.is_dir()
+
+    def download(self, report_progress=lambda done, total: None):
+        self.downloads += 1
+        if self.failure is not None:
+            raise self.failure
+        report_progress(12_300_000, None)
+        if not self.folder.is_dir():
+            make_course(self.folder)
+        return self.folder
+
+
 class FakeChooser:
     """Stands in for the folder picker: records where it started and returns
     `outcome` (a folder, or None for cancel); an exception is raised."""
@@ -123,6 +148,7 @@ def make_app(
     editors=None,
     dark=True,
     severities=frozenset(Severity),
+    demo=None,
 ):
     """An app whose config names `course` (no config when course is None);
     `dark` is what the system's light or dark mode reports; `severities` are
@@ -145,6 +171,7 @@ def make_app(
         open_url=urls.append,
         show_folder=shown.append,
         prefers_dark=lambda: dark,
+        demo=demo or FakeDemo(tmp_path / "demo-cache"),
     )
     return app, config_path
 
@@ -373,6 +400,75 @@ def test_no_folder_picker_is_explained_on_the_page(tmp_path):
         await pilot.pause()
         assert on_setup(app)
         assert "no desktop session" in setup_error(app)
+
+    drive(app, steps)
+
+
+def test_the_demo_downloads_the_course_and_opens_it_without_saving_it(tmp_path):
+    demo = FakeDemo(tmp_path / "cache")
+    app, config_path = make_app(tmp_path, FakeChecker([FIRST]), demo=demo)
+
+    async def steps(app, pilot):
+        assert not is_visible(app, "#refresh-demo")  # nothing downloaded yet
+        await pilot.click("#try-demo")
+        await settle(app, pilot)
+        assert demo.downloads == 1
+        assert not on_setup(app)
+        assert "DEMO" in app.title
+        assert FIRST.message in panel_text(app)
+        assert not config_path.exists()  # the demo is not a saved course
+
+    drive(app, steps)
+
+
+def test_a_downloaded_demo_opens_at_once_and_can_be_refreshed(tmp_path):
+    demo = FakeDemo(tmp_path / "cache", ready=True)
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), demo=demo)
+
+    async def steps(app, pilot):
+        assert is_visible(app, "#refresh-demo")
+        await pilot.click("#try-demo")
+        await settle(app, pilot)
+        assert demo.downloads == 0
+        assert "DEMO" in app.title
+        await press(app, pilot, "s")
+        await pilot.click("#refresh-demo")
+        await settle(app, pilot)
+        assert demo.downloads == 1
+        assert not on_setup(app)
+
+    drive(app, steps)
+
+
+def test_a_failed_demo_download_is_explained_on_the_setup_page(tmp_path):
+    demo = FakeDemo(tmp_path / "cache", failure=DemoError("No network."))
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), demo=demo)
+
+    async def steps(app, pilot):
+        await pilot.click("#try-demo")
+        await settle(app, pilot)
+        assert on_setup(app)
+        status = render_text(app.screen.query_one("#demo-status", Static).content)
+        assert "No network." in status
+
+    drive(app, steps)
+
+
+def test_choosing_a_real_course_leaves_the_demo(tmp_path):
+    course = make_course(tmp_path / "course")
+    demo = FakeDemo(tmp_path / "cache", ready=True)
+    app, config_path = make_app(tmp_path, FakeChecker([FIRST]), demo=demo)
+
+    async def steps(app, pilot):
+        await pilot.click("#try-demo")
+        await settle(app, pilot)
+        await press(app, pilot, "s")
+        assert typed_path(app) == ""  # the demo's folder is not offered as a course
+        await enter_folder(app, pilot, course)
+        assert "DEMO" not in app.title
+        config = load_config(config_path)
+        assert config.course_dir == course
+        assert demo.folder not in config.recent
 
     drive(app, steps)
 

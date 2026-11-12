@@ -23,6 +23,8 @@ from datetime import timedelta
 from functools import partial
 from pathlib import Path
 
+from platformdirs import user_cache_dir
+from textual import work
 from textual.app import App
 
 from birdwatcher.checks import ALL_CHECKS
@@ -35,6 +37,7 @@ from birdwatcher.core.config import (
     with_course,
 )
 from birdwatcher.core.course import check_course, course_problem
+from birdwatcher.core.demo import DemoCourse, DemoError
 from birdwatcher.core.fix_log import FIX_LOG_FILE
 from birdwatcher.core.ignores import IGNORE_FILE
 from birdwatcher.core.run import RunResult
@@ -169,9 +172,16 @@ class BirdwatcherApp(App):
         prefers_dark (Callable[[], bool | None]): Whether the system is in
             dark mode (None when unknown). Defaults to
             system.system_prefers_dark.
+        demo (DemoCourse | None): The demo course the setup page offers (TRY
+            THE DEMO, and REFRESH DEMO once downloaded); None means a
+            core.demo.DemoCourse in Birdwatcher's cache folder. The demo opens
+            like a course with DEMO in the title, but is never saved as the
+            course or added to the recent list; choosing a course on the
+            setup page leaves it.
     """
 
     TITLE = "BIRDWATCHER"
+    DEMO_TITLE = "BIRDWATCHER · DEMO"
     CSS_PATH = "birdwatcher.tcss"
 
     def __init__(
@@ -186,9 +196,12 @@ class BirdwatcherApp(App):
         fix_log_path: Path | None = None,
         ignore_path: Path | None = None,
         prefers_dark: Callable[[], bool | None] = system_prefers_dark,
+        demo: DemoCourse | None = None,
     ):
         super().__init__()
         self._prefers_dark = prefers_dark
+        self._demo = demo or DemoCourse(user_cache_dir("birdwatcher", appauthor=False))
+        self._in_demo = False
         self._own_theme = None  # the theme this app last set itself
         self._ignore_path = (
             Path(config_path).with_name(IGNORE_FILE)
@@ -225,8 +238,12 @@ class BirdwatcherApp(App):
             self._show_findings(config.course_dir)
 
     def action_open_setup(self):
-        """Open the setup page, filled in with the current course folder."""
-        current = self._findings.course_dir if self._findings else None
+        """Open the setup page, filled in with the current course folder (in
+        the demo, the saved course, if any: the demo is not a course)."""
+        if self._in_demo:
+            current = self._config.course_dir if self._config else None
+        else:
+            current = self._findings.course_dir if self._findings else None
         self.push_screen(self._setup(current, None, True), self._course_chosen)
 
     def _setup(self, course_dir, problem, can_cancel):
@@ -243,7 +260,47 @@ class BirdwatcherApp(App):
             theme=THEME_AUTO if config is None else config.theme,
             preview_theme=self._apply_theme,
             reset=self._reset_everything,
+            start_demo=self._start_demo,
+            demo_ready=self._demo.ready(),
         )
+
+    def _start_demo(self, refresh):
+        """Open the demo, downloading it first when there is no copy yet (or
+        when asked to refresh it)."""
+        if self._demo.ready() and not refresh:
+            self._enter_demo(self._demo.folder)
+            return
+        self._report_demo("Downloading the CS 212 course…")
+        self._download_demo()
+
+    @work(thread=True, exclusive=True)
+    def _download_demo(self):
+        def progress(done, total):
+            size = f"{done / 1e6:.1f} MB" + (
+                f" of {total / 1e6:.1f} MB" if total else ""
+            )
+            self.call_from_thread(
+                self._report_demo, f"Downloading the CS 212 course… {size}"
+            )
+
+        try:
+            folder = self._demo.download(progress)
+        except DemoError as error:
+            self.call_from_thread(self._report_demo, str(error), True)
+        else:
+            self.call_from_thread(self._enter_demo, folder)
+
+    def _report_demo(self, text, problem=False):
+        if isinstance(self.screen, SetupScreen):
+            self.screen.show_demo_status(text, problem)
+
+    def _enter_demo(self, folder):
+        """Leave the setup page for the demo course, without saving it."""
+        if isinstance(self.screen, SetupScreen):
+            self.pop_screen()  # its result callback is not called
+        self._in_demo = True
+        self.title = self.DEMO_TITLE
+        self._show_findings(folder)
 
     def _reset_everything(self):
         """Forget everything saved (settings, fix log, ignores, link cache),
@@ -270,6 +327,8 @@ class BirdwatcherApp(App):
                 THEME_AUTO if self._config is None else self._config.theme
             )
             return
+        self._in_demo = False
+        self.title = self.TITLE
         base = self._config or Config(course_dir=choice.course_dir, recent=())
         self._config = with_course(
             replace(base, editor=choice.editor, theme=choice.theme), choice.course_dir
@@ -289,10 +348,14 @@ class BirdwatcherApp(App):
         self.theme = name
 
     def _save_split(self, percent):
+        if self._config is None:  # the demo, before any course was saved
+            return
         self._config = replace(self._config, split=percent)
         save_config(self._config_path, self._config)
 
     def _save_severities(self, severities):
+        if self._config is None:
+            return
         if severities != self._config.shown_severities:
             self._config = replace(self._config, shown_severities=frozenset(severities))
             save_config(self._config_path, self._config)
@@ -319,6 +382,8 @@ class BirdwatcherApp(App):
 
     def _show_findings(self, course_dir):
         if self._findings is None:
+            # In the demo before any course was saved, the defaults apply.
+            settings = self._config or Config(course_dir=course_dir)
             self._findings = FindingsScreen(
                 course_dir,
                 self._check,
@@ -327,9 +392,9 @@ class BirdwatcherApp(App):
                 self._show_folder,
                 self._fix_log_path,
                 self._ignore_path,
-                split=self._config.split,
+                split=settings.split,
                 save_split=self._save_split,
-                shown_severities=self._config.shown_severities,
+                shown_severities=settings.shown_severities,
                 save_severities=self._save_severities,
             )
             self.push_screen(self._findings)

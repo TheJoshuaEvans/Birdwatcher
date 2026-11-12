@@ -79,6 +79,11 @@ class SetupScreen(Screen):
         reset (Callable[[], object] | None): Forgets everything Birdwatcher
             has saved; with it, a RESET EVERYTHING button asks first (see
             reset.ResetDialog) and calls it when confirmed.
+        start_demo (Callable[[bool], object] | None): Opens the demo course;
+            with it, a TRY THE DEMO button calls it with False, and (when
+            demo_ready) a REFRESH DEMO button with True, to download it again.
+            The app reports the download with show_demo_status.
+        demo_ready (bool): Whether the demo has been downloaded before.
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -105,9 +110,13 @@ class SetupScreen(Screen):
         theme=THEME_AUTO,
         preview_theme=None,
         reset=None,
+        start_demo=None,
+        demo_ready=False,
     ):
         super().__init__()
         self._reset = reset
+        self._start_demo = start_demo
+        self._demo_ready = demo_ready
         self._themes = tuple(themes)
         self._theme = theme if theme in self._themes else THEME_AUTO
         self._preview_theme = preview_theme or (lambda setting: None)
@@ -161,11 +170,31 @@ class SetupScreen(Screen):
             yield Static(self._problem or "", id="setup-error")
             with Horizontal(id="setup-buttons"):
                 yield Button(Content("[↵] SAVE"), variant="primary", id="save")
+                if self._start_demo is not None:
+                    yield Button(Content("TRY THE DEMO"), id="try-demo")
+                    refresh = Button(Content("REFRESH DEMO"), id="refresh-demo")
+                    refresh.display = self._demo_ready
+                    yield refresh
                 if self._reset is not None:
                     yield Button(
                         Content("RESET EVERYTHING…"), variant="error", id="reset"
                     )
+            status = Static(id="demo-status")
+            status.display = False
+            yield status
         yield Footer()
+
+    def show_demo_status(self, text, problem=False):
+        """
+        Show how the demo is coming along under the buttons.
+
+        Args:
+            text (str): What to say.
+            problem (bool): True when it failed (shown as an error).
+        """
+        status = self.query_one("#demo-status", Static)
+        status.update(Text(text, style="bold red" if problem else ""))
+        status.display = True
 
     def on_mount(self):
         self.query_one("#setup").border_title = Content("[ COURSE FOLDER ]")
@@ -195,6 +224,8 @@ class SetupScreen(Screen):
             self._choose(self._typed_folder())
         elif event.button.id == "reset":
             self.app.push_screen(ResetDialog(), self._reset_answered)
+        elif event.button.id in ("try-demo", "refresh-demo"):
+            self._start_demo(event.button.id == "refresh-demo")
 
     def _reset_answered(self, confirmed):
         if confirmed:

@@ -10,6 +10,7 @@ from pathlib import Path
 from birdwatcher.core.run import run_checks
 
 DOCS_FOLDER = "docs"  # where a course publishes its site from, when it has one
+REPO_MARKER = ".birdwatcher-repo"  # names the GitHub repository of a copy without git
 ORIGIN_SECTION = '[remote "origin"]'
 GITDIR_PREFIX = "gitdir:"
 GITHUB_REMOTE = re.compile(
@@ -70,12 +71,17 @@ def github_repo(course_dir):
     Returns:
         str | None: "owner/name" when origin is a github.com address (HTTPS or
             SSH, with or without ".git"); None when there is no git folder, no
-            origin remote, or origin is not on GitHub.
+            origin remote, or origin is not on GitHub. A copy without git (the
+            demo course) can name its repository in a REPO_MARKER file instead.
     """
     try:
         text = (_git_dir(Path(course_dir)) / "config").read_text(encoding="utf-8")
     except OSError:
-        return None
+        try:
+            marked = (Path(course_dir) / REPO_MARKER).read_text(encoding="utf-8")
+        except OSError:
+            return None
+        return marked.strip() or None
     section = None
     for raw_line in text.splitlines():
         line = raw_line.strip()
