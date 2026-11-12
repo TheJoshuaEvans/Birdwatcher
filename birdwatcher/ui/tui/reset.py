@@ -19,7 +19,8 @@ RESET_TEXT = (
     "  - your course folders and the recent list, the editor, theme and layout;\n"
     "  - the list of fixed findings (the fixes themselves stay in your files);\n"
     "  - every ignored finding, and its reason;\n"
-    "  - the answers it keeps from web sites.\n\n"
+    "  - the answers it keeps from web sites;\n"
+    "  - the downloaded demo course.\n\n"
     "Your course folders are not touched: their files, and each course's "
     "cspell.json, stay as they are."
 )

@@ -54,6 +54,16 @@ def test_downloading_unpacks_the_course_and_names_its_repository(tmp_path):
     assert github_repo(folder) == DEMO_REPO
 
 
+def test_forgetting_the_demo_deletes_its_copy(tmp_path):
+    demo = DemoCourse(tmp_path, FakeFetch(archive({"docs/A.md": "x"})))
+    demo.forget()  # nothing downloaded yet: nothing to do
+    demo.download()
+    demo.forget()
+    assert not demo.ready()
+    assert not demo.folder.exists()
+    assert not (tmp_path / "demo").exists()
+
+
 def test_the_demo_is_pinned_to_one_commit_of_the_course():
     # A branch would follow the instructor's fixes; a commit keeps the
     # demo's findings to show.

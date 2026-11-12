@@ -84,6 +84,11 @@ class DemoCourse:
         """
         return (self.folder / REPO_MARKER).is_file()
 
+    def forget(self):
+        """Delete the downloaded copy (the whole demo folder in the cache),
+        if there is one."""
+        shutil.rmtree(self.folder.parent, ignore_errors=True)
+
     def download(self, report_progress=lambda done, total: None):
         """
         Download the course from DEMO_URL and put it in self.folder, in place

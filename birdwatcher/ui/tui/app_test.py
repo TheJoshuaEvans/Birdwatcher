@@ -86,11 +86,15 @@ class FakeDemo:
         self.folder = cache / "demo" / "CS212-CourseMaterials"
         self.failure = failure
         self.downloads = 0
+        self.forgotten = False
         if ready:
             make_course(self.folder)
 
     def ready(self):
         return self.folder.is_dir()
+
+    def forget(self):
+        self.forgotten = True
 
     def download(self, report_progress=lambda done, total: None):
         self.downloads += 1
@@ -551,15 +555,20 @@ def test_reset_everything_asks_first_and_cancel_keeps_everything(tmp_path):
 def test_reset_everything_forgets_it_all_and_starts_like_a_first_run(tmp_path):
     course = make_course(tmp_path / "course")
     (course / "cspell.json").write_text('{"words": ["Hte"]}', encoding="utf-8")
-    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course, dark=False)
+    demo = FakeDemo(tmp_path / "cache", ready=True)
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course, dark=False, demo=demo)
     files = saved_state(tmp_path)
 
     async def steps(app, pilot):
         await press(app, pilot, "s")
         await pilot.click("#reset")
         await settle(app, pilot)
+        assert "demo" in render_text(
+            app.screen.query_one("#reset-text", Static).content
+        )
         await press(app, pilot, "enter")
         assert not any(file.exists() for file in files)
+        assert demo.forgotten  # the downloaded demo goes too
         assert on_setup(app)
         assert typed_path(app) == ""
         assert not is_visible(app, "#recent")

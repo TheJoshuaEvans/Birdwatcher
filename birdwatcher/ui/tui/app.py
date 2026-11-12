@@ -303,8 +303,9 @@ class BirdwatcherApp(App):
         self._show_findings(folder)
 
     def _reset_everything(self):
-        """Forget everything saved (settings, fix log, ignores, link cache),
-        close the course, and start over as on a first run."""
+        """Forget everything saved (settings, fix log, ignores, link cache,
+        the downloaded demo), close the course, and start over as on a first
+        run."""
         link_cache = self._config_path.with_name(LINK_CACHE_FILE)
         for path in (
             self._config_path,
@@ -313,6 +314,9 @@ class BirdwatcherApp(App):
             link_cache,
         ):
             path.unlink(missing_ok=True)
+        self._demo.forget()
+        self._in_demo = False
+        self.title = self.TITLE
         self._config = None
         self._findings = None
         while len(self.screen_stack) > 1:
