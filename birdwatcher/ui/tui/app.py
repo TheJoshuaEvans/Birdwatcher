@@ -242,7 +242,26 @@ class BirdwatcherApp(App):
             themes=sorted(self.available_themes),
             theme=THEME_AUTO if config is None else config.theme,
             preview_theme=self._apply_theme,
+            reset=self._reset_everything,
         )
+
+    def _reset_everything(self):
+        """Forget everything saved (settings, fix log, ignores, link cache),
+        close the course, and start over as on a first run."""
+        link_cache = self._config_path.with_name(LINK_CACHE_FILE)
+        for path in (
+            self._config_path,
+            self._fix_log_path,
+            self._ignore_path,
+            link_cache,
+        ):
+            path.unlink(missing_ok=True)
+        self._config = None
+        self._findings = None
+        while len(self.screen_stack) > 1:
+            self.pop_screen()  # the setup page, then the course's findings view
+        self._apply_theme(THEME_AUTO)
+        self.push_screen(self._setup(None, None, False), self._course_chosen)
 
     def _course_chosen(self, choice):
         if choice is None:

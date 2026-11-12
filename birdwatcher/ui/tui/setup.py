@@ -30,6 +30,7 @@ from textual.widgets.option_list import Option
 
 from birdwatcher.core.config import THEME_AUTO
 from birdwatcher.core.course import DOCS_FOLDER, course_problem
+from birdwatcher.ui.tui.reset import ResetDialog
 
 SETUP_INTRO = (
     "Birdwatcher checks a local clone of a course repository: the folder that "
@@ -75,11 +76,18 @@ class SetupScreen(Screen):
         theme (str): The theme setting to select at first.
         preview_theme (Callable[[str], object]): Shows a theme setting while
             the page is open (the app puts the saved one back on cancel).
+        reset (Callable[[], object] | None): Forgets everything Birdwatcher
+            has saved; with it, a RESET EVERYTHING button asks first (see
+            reset.ResetDialog) and calls it when confirmed.
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("ctrl+o", "browse", "Browse"),
         Binding("escape", "cancel", "Back"),
+        # q leaves: back to the course, or (on a first run, with nothing to go
+        # back to) out of Birdwatcher. In the path box it is just a letter.
+        Binding("q", "cancel", "Back"),
+        Binding("q", "quit_first_run", "Quit"),
         Binding("ctrl+q", "app.quit", "Quit"),
     ]
 
@@ -96,8 +104,10 @@ class SetupScreen(Screen):
         themes=(),
         theme=THEME_AUTO,
         preview_theme=None,
+        reset=None,
     ):
         super().__init__()
+        self._reset = reset
         self._themes = tuple(themes)
         self._theme = theme if theme in self._themes else THEME_AUTO
         self._preview_theme = preview_theme or (lambda setting: None)
@@ -151,6 +161,10 @@ class SetupScreen(Screen):
             yield Static(self._problem or "", id="setup-error")
             with Horizontal(id="setup-buttons"):
                 yield Button(Content("[↵] SAVE"), variant="primary", id="save")
+                if self._reset is not None:
+                    yield Button(
+                        Content("RESET EVERYTHING…"), variant="error", id="reset"
+                    )
         yield Footer()
 
     def on_mount(self):
@@ -159,11 +173,17 @@ class SetupScreen(Screen):
     def check_action(self, action, parameters):
         if action == "cancel":
             return self._can_cancel
+        if action == "quit_first_run":
+            return not self._can_cancel
         return True
 
     def action_cancel(self):
         if self._can_cancel:
             self.dismiss(None)
+
+    def action_quit_first_run(self):
+        if not self._can_cancel:
+            self.app.exit()
 
     def on_input_submitted(self, event: Input.Submitted):
         self._choose(self._typed_folder())
@@ -173,6 +193,12 @@ class SetupScreen(Screen):
             self.action_browse()
         elif event.button.id == "save":
             self._choose(self._typed_folder())
+        elif event.button.id == "reset":
+            self.app.push_screen(ResetDialog(), self._reset_answered)
+
+    def _reset_answered(self, confirmed):
+        if confirmed:
+            self._reset()
 
     def on_select_changed(self, event: Select.Changed):
         self._preview_theme(event.value)

@@ -186,7 +186,7 @@ Divider:hover, Divider.-dragging {
 }
 
 /* The ignore dialog, centered over the findings */
-IgnoreDialog, FixAllDialog, KeysDialog {
+IgnoreDialog, FixAllDialog, KeysDialog, ResetDialog {
     align: center middle;
 }
 
@@ -208,7 +208,7 @@ IgnoreDialog, FixAllDialog, KeysDialog {
     width: 1fr;
 }
 
-#ignore-dialog, #fix-all-dialog {
+#ignore-dialog, #fix-all-dialog, #reset-dialog {
     width: 72;
     height: auto;
     padding: 1 2;
@@ -229,12 +229,12 @@ IgnoreDialog, FixAllDialog, KeysDialog {
     margin-top: 1;
 }
 
-#ignore-buttons, #fix-all-buttons {
+#ignore-buttons, #fix-all-buttons, #reset-buttons {
     height: auto;
     margin-top: 1;
 }
 
-#ignore-buttons Button, #fix-all-buttons Button {
+#ignore-buttons Button, #fix-all-buttons Button, #reset-buttons Button {
     margin-right: 2;
 }
 

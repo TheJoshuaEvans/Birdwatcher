@@ -35,6 +35,7 @@ from birdwatcher.ui.tui.app import BirdwatcherApp
 from birdwatcher.ui.tui.divider import Divider
 from birdwatcher.ui.tui.fix_all import FixAllDialog
 from birdwatcher.ui.tui.keys import KeysDialog
+from birdwatcher.ui.tui.reset import ResetDialog
 from birdwatcher.ui.tui.tree import FindingsTree
 
 CHECK = Check(
@@ -372,6 +373,103 @@ def test_no_folder_picker_is_explained_on_the_page(tmp_path):
         await pilot.pause()
         assert on_setup(app)
         assert "no desktop session" in setup_error(app)
+
+    drive(app, steps)
+
+
+def test_q_on_the_first_run_setup_page_quits(tmp_path):
+    app, _ = make_app(tmp_path, FakeChecker([]))
+    exits = []  # Textual's exit, recorded: the test app must keep running
+
+    async def steps(app, pilot):
+        app.exit = lambda *args, **kwargs: exits.append(True)
+        app.screen.query_one("#theme").focus()  # out of the path box
+        await press(app, pilot, "q")
+        assert exits == [True]
+
+    drive(app, steps)
+
+
+def test_q_on_the_setup_page_goes_back_to_the_course(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course)
+    exits = []
+
+    async def steps(app, pilot):
+        app.exit = lambda *args, **kwargs: exits.append(True)
+        await press(app, pilot, "s")
+        app.screen.query_one("#theme").focus()
+        await press(app, pilot, "q")
+        assert not on_setup(app)
+        assert FIRST.message in panel_text(app)
+        assert exits == []
+
+    drive(app, steps)
+
+
+def test_q_in_the_path_box_is_just_a_letter(tmp_path):
+    app, _ = make_app(tmp_path, FakeChecker([]))
+    exits = []
+
+    async def steps(app, pilot):
+        app.exit = lambda *args, **kwargs: exits.append(True)
+        app.screen.query_one("#course-dir", Input).focus()
+        await press(app, pilot, "q")
+        assert typed_path(app) == "q"
+        assert exits == []
+
+    drive(app, steps)
+
+
+SAVED_FILES = ("config.json", "fixes.json", "ignored.json", "links.json")
+
+
+def saved_state(tmp_path):
+    """Write Birdwatcher's other saved files beside the settings; their names."""
+    settings = tmp_path / "settings"
+    for name in SAVED_FILES[1:]:
+        (settings / name).write_text("{}", encoding="utf-8")
+    return [settings / name for name in SAVED_FILES]
+
+
+def test_reset_everything_asks_first_and_cancel_keeps_everything(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course)
+    files = saved_state(tmp_path)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "s")
+        await pilot.click("#reset")
+        await settle(app, pilot)
+        assert isinstance(app.screen, ResetDialog)
+        text = render_text(app.screen.query_one("#reset-text", Static).content)
+        assert "ignored" in text and "not touched" in text
+        await press(app, pilot, "escape")
+        assert on_setup(app)
+        assert all(file.exists() for file in files)
+
+    drive(app, steps)
+
+
+def test_reset_everything_forgets_it_all_and_starts_like_a_first_run(tmp_path):
+    course = make_course(tmp_path / "course")
+    (course / "cspell.json").write_text('{"words": ["Hte"]}', encoding="utf-8")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course, dark=False)
+    files = saved_state(tmp_path)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "s")
+        await pilot.click("#reset")
+        await settle(app, pilot)
+        await press(app, pilot, "enter")
+        assert not any(file.exists() for file in files)
+        assert on_setup(app)
+        assert typed_path(app) == ""
+        assert not is_visible(app, "#recent")
+        assert app.theme == "textual-light"  # back to matching the system
+        await press(app, pilot, "escape")  # a first run cannot be cancelled
+        assert on_setup(app)
+        assert (course / "cspell.json").exists()  # course folders are untouched
 
     drive(app, steps)
 
