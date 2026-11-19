@@ -10,9 +10,13 @@ from pathlib import Path
 
 from platformdirs import user_config_dir
 
+from birdwatcher.core.ai import DEFAULT_PROVIDER, PROVIDERS
 from birdwatcher.core.findings import Severity
 
 CONFIG_FILE = "config.json"
+AI_PROVIDER_KEY = "ai_provider"
+AI_MODEL_KEY = "ai_model"
+AI_URL_KEY = "ai_url"
 COURSE_DIR_KEY = "course_dir"
 EDITOR_KEY = "editor"
 RECENT_KEY = "recent"
@@ -45,6 +49,12 @@ class Config:
             when the panes are side by side, in percent (10 to 90).
         shown_severities (frozenset[Severity]): The severities the findings
             list shows (it may be empty).
+        ai_provider (str): The id of the chat completion provider (one of
+            core.ai.PROVIDERS).
+        ai_model (str): The model to use, as the provider spells it ("" when
+            none is chosen).
+        ai_url (str): The address of the custom provider's API ("" when not
+            entered). API keys are never part of the settings.
     """
 
     course_dir: Path
@@ -53,6 +63,9 @@ class Config:
     theme: str = THEME_AUTO
     split: int = DEFAULT_SPLIT
     shown_severities: frozenset[Severity] = DEFAULT_SHOWN_SEVERITIES
+    ai_provider: str = DEFAULT_PROVIDER
+    ai_model: str = PROVIDERS[DEFAULT_PROVIDER].default_model
+    ai_url: str = ""
 
 
 def with_course(config, course_dir):
@@ -102,7 +115,9 @@ def load_config(path):
             list are left out; unreadable
             recent entries are left out, and a file from before the recent
             list existed (no "recent" key) gets one holding just the course
-            folder.
+            folder. An unknown AI provider is DEFAULT_PROVIDER with its
+            default model; a missing model is the provider's default model,
+            and a missing custom address is "".
     """
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -129,7 +144,24 @@ def load_config(path):
         theme=theme if isinstance(theme, str) else THEME_AUTO,
         split=split if sensible and split in SPLIT_RANGE else DEFAULT_SPLIT,
         shown_severities=_severities(data.get(SHOWN_SEVERITIES_KEY)),
+        **_ai_settings(data),
     )
+
+
+def _ai_settings(data):
+    """The AI fields of Config from saved settings, with fallbacks."""
+    provider = data.get(AI_PROVIDER_KEY)
+    model = data.get(AI_MODEL_KEY)
+    url = data.get(AI_URL_KEY)
+    if provider not in PROVIDERS:
+        provider, model = DEFAULT_PROVIDER, None
+    return {
+        "ai_provider": provider,
+        "ai_model": model
+        if isinstance(model, str)
+        else PROVIDERS[provider].default_model,
+        "ai_url": url if isinstance(url, str) else "",
+    }
 
 
 def _severities(stored):
@@ -162,5 +194,8 @@ def save_config(path, config):
         SHOWN_SEVERITIES_KEY: sorted(
             severity.value for severity in config.shown_severities
         ),
+        AI_PROVIDER_KEY: config.ai_provider,
+        AI_MODEL_KEY: config.ai_model,
+        AI_URL_KEY: config.ai_url,
     }
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

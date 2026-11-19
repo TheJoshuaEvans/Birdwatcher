@@ -4,11 +4,13 @@ Contract tests for birdwatcher.core.config.
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
+import json
 import sys
 from pathlib import Path
 
 import pytest
 
+from birdwatcher.core.ai import CUSTOM, GEMINI, OPENROUTER
 from birdwatcher.core.config import (
     DEFAULT_EDITOR,
     DEFAULT_SHOWN_SEVERITIES,
@@ -165,6 +167,58 @@ def test_unreadable_shown_severities_fall_back(tmp_path, stored, expected):
         f'{{"course_dir": "a", "shown_severities": {stored}}}', encoding="utf-8"
     )
     assert load_config(path).shown_severities == expected
+
+
+def test_ai_settings_default_to_openrouters_free_router():
+    config = Config(course_dir=Path("a"))
+    assert (config.ai_provider, config.ai_model, config.ai_url) == (
+        OPENROUTER,
+        "openrouter/free",
+        "",
+    )
+
+
+def test_ai_settings_load_back(tmp_path):
+    path = tmp_path / "config.json"
+    config = Config(
+        course_dir=Path("a"),
+        ai_provider=CUSTOM,
+        ai_model="qwen3:8b",
+        ai_url="http://localhost:1234/v1",
+    )
+    save_config(path, config)
+    assert load_config(path) == config
+
+
+def test_ai_settings_never_hold_a_key(tmp_path):
+    path = tmp_path / "config.json"
+    save_config(path, Config(course_dir=Path("a")))
+    assert "key" not in path.read_text(encoding="utf-8").lower()
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        ("{}", (OPENROUTER, "openrouter/free", "")),
+        ('{"ai_provider": "gemini"}', (GEMINI, "", "")),
+        (
+            '{"ai_provider": "nonsense", "ai_model": "x", "ai_url": "y"}',
+            (OPENROUTER, "openrouter/free", "y"),
+        ),
+        (
+            '{"ai_provider": 3, "ai_model": [], "ai_url": {}}',
+            (OPENROUTER, "openrouter/free", ""),
+        ),
+    ],
+    ids=["older-file", "no-model", "unknown-provider", "wrong-types"],
+)
+def test_unreadable_ai_settings_fall_back(tmp_path, stored, expected):
+    path = tmp_path / "config.json"
+    data = json.loads(stored)
+    data["course_dir"] = "a"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    config = load_config(path)
+    assert (config.ai_provider, config.ai_model, config.ai_url) == expected
 
 
 def test_default_path_is_a_json_file_named_for_birdwatcher():

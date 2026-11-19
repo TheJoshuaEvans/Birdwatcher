@@ -25,11 +25,21 @@ from textual.widgets import (
     RadioSet,
     Select,
     Static,
+    Tab,
+    Tabs,
 )
 from textual.widgets.option_list import Option
 
+from birdwatcher.core.ai import (
+    DEFAULT_PROVIDER,
+    PROVIDERS,
+    chat,
+    list_models,
+    memory_key_store,
+)
 from birdwatcher.core.config import THEME_AUTO
 from birdwatcher.core.course import DOCS_FOLDER, course_problem
+from birdwatcher.ui.tui.ai_panel import AiPanel
 from birdwatcher.ui.tui.reset import ResetDialog
 
 SETUP_INTRO = (
@@ -50,11 +60,17 @@ class SetupChoice:
         course_dir (Path): The chosen course folder (it can be used).
         editor (str): The id of the chosen editor.
         theme (str): The chosen theme's name, or core.config.THEME_AUTO.
+        ai_provider (str): The chosen chat completion provider's id.
+        ai_model (str): The chosen model.
+        ai_url (str): The custom provider's address ("" when not entered).
     """
 
     course_dir: Path
     editor: str
     theme: str = THEME_AUTO
+    ai_provider: str = DEFAULT_PROVIDER
+    ai_model: str = PROVIDERS[DEFAULT_PROVIDER].default_model
+    ai_url: str = ""
 
 
 class SetupScreen(Screen):
@@ -62,6 +78,12 @@ class SetupScreen(Screen):
     The setup page: closes with a SetupChoice once a usable folder is chosen
     (or with None when cancelled). See BirdwatcherApp for the behavior as a
     whole.
+
+    Two tabs (#setup-tabs) split the page: COURSE (#tab-course: the folder,
+    editor, theme and the buttons below them) and AI MODEL (#tab-ai: an
+    ai_panel.AiPanel and its own SAVE button, #save-ai). Saving from either
+    tab saves everything on both; from AI MODEL, a course folder that cannot
+    be used switches to COURSE and shows why.
 
     Args:
         course_dir (Path | None): The path to fill in.
@@ -84,6 +106,16 @@ class SetupScreen(Screen):
             demo_ready) a REFRESH DEMO button with True, to download it again.
             The app reports the download with show_demo_status.
         demo_ready (bool): Whether the demo has been downloaded before.
+        ai_provider (str): The provider to select on AI MODEL at first.
+        ai_model (str): The model to fill in at first.
+        ai_url (str): The custom provider's address to fill in at first.
+        keys (KeyStore | None): Where API keys are saved; None keeps them in
+            memory only (for a page used without a keyring).
+        environ (Mapping[str, str]): The environment variables (for keys).
+        send_chat (Callable[[Connection, list[dict]], Reply]): Sends the test
+            chat's conversation (core.ai.chat).
+        fetch_models (Callable[[Connection], list[ModelInfo]]): Lists a
+            provider's models (core.ai.list_models).
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -112,8 +144,24 @@ class SetupScreen(Screen):
         reset=None,
         start_demo=None,
         demo_ready=False,
+        ai_provider=DEFAULT_PROVIDER,
+        ai_model=PROVIDERS[DEFAULT_PROVIDER].default_model,
+        ai_url="",
+        keys=None,
+        environ=None,
+        send_chat=chat,
+        fetch_models=list_models,
     ):
         super().__init__()
+        self._ai = {
+            "provider": ai_provider,
+            "model": ai_model,
+            "url": ai_url,
+            "keys": keys or memory_key_store(),
+            "environ": {} if environ is None else environ,
+            "send_chat": send_chat,
+            "fetch_models": fetch_models,
+        }
         self._reset = reset
         self._start_demo = start_demo
         self._demo_ready = demo_ready
@@ -130,6 +178,24 @@ class SetupScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
+        yield Tabs(
+            Tab("COURSE", id="tab-course"),
+            Tab("AI MODEL", id="tab-ai"),
+            id="setup-tabs",
+        )
+        with VerticalScroll(id="setup-ai") as ai_page:
+            ai_page.display = False
+            yield AiPanel(
+                self._ai["provider"],
+                self._ai["model"],
+                self._ai["url"],
+                keys=self._ai["keys"],
+                environ=self._ai["environ"],
+                send_chat=self._ai["send_chat"],
+                fetch_models=self._ai["fetch_models"],
+            )
+            with Horizontal(id="setup-ai-buttons"):
+                yield Button(Content("[↵] SAVE"), variant="primary", id="save-ai")
         with VerticalScroll(id="setup"):
             yield Static(SETUP_INTRO, id="setup-intro")
             recent_label = Static("RECENT COURSES", classes="setup-section")
@@ -198,6 +264,12 @@ class SetupScreen(Screen):
 
     def on_mount(self):
         self.query_one("#setup").border_title = Content("[ COURSE FOLDER ]")
+        self.query_one("#setup-ai").border_title = Content("[ AI MODEL ]")
+
+    def on_tabs_tab_activated(self, event: Tabs.TabActivated):
+        on_ai = event.tab.id == "tab-ai"
+        self.query_one("#setup-ai").display = on_ai
+        self.query_one("#setup").display = not on_ai
 
     def check_action(self, action, parameters):
         if action == "cancel":
@@ -220,7 +292,7 @@ class SetupScreen(Screen):
     def on_button_pressed(self, event: Button.Pressed):
         if event.button.id == "browse":
             self.action_browse()
-        elif event.button.id == "save":
+        elif event.button.id in ("save", "save-ai"):
             self._choose(self._typed_folder())
         elif event.button.id == "reset":
             self.app.push_screen(ResetDialog(), self._reset_answered)
@@ -271,7 +343,17 @@ class SetupScreen(Screen):
             self._show_problem(problem)
             return
         theme = self.query_one("#theme", Select).value
-        self.dismiss(SetupChoice(course_dir, self._chosen_editor(), theme))
+        provider, model, url = self.query_one(AiPanel).values
+        self.dismiss(
+            SetupChoice(
+                course_dir,
+                self._chosen_editor(),
+                theme,
+                ai_provider=provider,
+                ai_model=model,
+                ai_url=url,
+            )
+        )
 
     def _chosen_editor(self):
         pressed = self.query_one("#editor", RadioSet).pressed_button
@@ -281,6 +363,8 @@ class SetupScreen(Screen):
         return self._editor
 
     def _show_problem(self, problem):
+        # The course folder's problems are shown on its own tab.
+        self.query_one("#setup-tabs", Tabs).active = "tab-course"
         self.query_one("#setup-error", Static).update(Text(problem))
 
 

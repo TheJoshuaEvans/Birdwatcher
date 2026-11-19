@@ -20,6 +20,7 @@ RESET_TEXT = (
     "  - the list of fixed findings (the fixes themselves stay in your files);\n"
     "  - every ignored finding, and its reason;\n"
     "  - the answers it keeps from web sites;\n"
+    "  - the API keys saved in Birdwatcher (environment variables stay);\n"
     "  - the downloaded demo course.\n\n"
     "Your course folders are not touched: their files, and each course's "
     "cspell.json, stay as they are."

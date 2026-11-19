@@ -24,6 +24,7 @@ from textual.widgets import (
     Static,
 )
 
+from birdwatcher.core.ai import memory_key_store
 from birdwatcher.core.check import Check
 from birdwatcher.core.config import Config, load_config, save_config
 from birdwatcher.core.demo import DemoError
@@ -154,10 +155,17 @@ def make_app(
     dark=True,
     severities=frozenset(Severity),
     demo=None,
+    keys=None,
+    environ=None,
+    send_chat=None,
+    fetch_models=None,
 ):
     """An app whose config names `course` (no config when course is None);
     `dark` is what the system's light or dark mode reports; `severities` are
-    the ones the list shows (all, unless a test is about filtering)."""
+    the ones the list shows (all, unless a test is about filtering). API keys
+    live in `keys` (a dict, empty by default) and the environment is
+    `environ` (empty by default), never the real ones; the chat and model
+    list fail the test unless fakes are given."""
     config_path = tmp_path / "settings" / "config.json"
     if course is not None:
         # As the app saves it: the course is also its only recent course.
@@ -177,8 +185,16 @@ def make_app(
         show_folder=shown.append,
         prefers_dark=lambda: dark,
         demo=demo or FakeDemo(tmp_path / "demo-cache"),
+        keys=memory_key_store({} if keys is None else keys),
+        environ={} if environ is None else environ,
+        send_chat=send_chat or no_network,
+        fetch_models=fetch_models or no_network,
     )
     return app, config_path
+
+
+def no_network(*args, **kwargs):
+    raise AssertionError("a test reached for the network without a fake")
 
 
 def drive(app, steps, size=None):

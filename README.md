@@ -79,7 +79,7 @@ In the app, mouse and keyboard both work. The bottom bar shows the keys for what
 | `r` | Run the checks again, after fixing something |
 | `ctrl+r` | Hard refresh: run the checks again, asking every web site afresh instead of reusing the day's answers |
 | `x`, or **STOP** | Stop a slow check while it runs (its progress shows at the bottom of the list); findings from the checks that finished stay, and `r` checks again |
-| `s` | Choose another course folder, try the demo, or reset everything |
+| `s` | Choose another course folder, the AI model (the **AI MODEL** tab), try the demo, or reset everything |
 | `?` | List every key, marking the ones that do not apply right now |
 | `q` | Quit |
 
@@ -99,6 +99,22 @@ Files open in the editor chosen on the setup page:
 - **Typora** opens the file at the top, and Birdwatcher says which line to look at. It is found wherever its installer or the Microsoft Store put it (and in `/Applications` on a Mac).
 - **The file's default app** opens it with whatever your system uses for that file type.
 
+### AI model
+
+The setup page's **AI MODEL** tab chooses the chat completion API that Birdwatcher's AI features use. Every provider is reached with the `openai` Python SDK, as in the CS 212 notes on calling a chat completion API, so any model a provider offers works:
+
+| Provider | Key | Notes |
+|---|---|---|
+| **OpenRouter** (the default) | `OPENROUTER_API_KEY` | One key for models from every company. The default model, `openrouter/free`, routes to whichever free model is available. |
+| **Gemini** | `GEMINI_API_KEY` | Google's models, through Google's OpenAI-compatible address. |
+| **OpenAI** | `OPENAI_API_KEY` | OpenAI's own models. |
+| **Local** | none | Ollama on this computer (`http://localhost:11434/v1`). |
+| **Custom URL** | optional | Any other address that speaks OpenAI's format, such as LM Studio (`http://localhost:1234/v1`). |
+
+The key comes from the provider's environment variable, set as the course notes describe, or from **Set key…**, which keeps it in your system's keyring (Credential Manager on Windows, Keychain on a Mac), never in Birdwatcher's settings file. A key saved in Birdwatcher wins over the environment variable; the tab says which one is in use without showing it, and **Forget saved key** removes a saved one.
+
+**Pick…** lists the provider's models to choose from, with a filter (type `free`, `claude`, `gemma`...) and, on OpenRouter, each model's price per million tokens and context length. The **TEST CHAT** below sends messages to the chosen model, keeping the conversation, and shows each answer with the model that wrote it (a router names the model it chose), the tokens it read and wrote, and how long it took. **Clear** starts a new conversation. Changes on the tab are saved with **Save**, like the rest of the setup page.
+
 ## How it works
 
 ### The course folder
@@ -113,13 +129,14 @@ Everything Birdwatcher keeps is in its own folders, never in a course (except th
 
 | What | Where |
 |---|---|
-| Settings: the course folder, recent courses, editor, theme, split, shown severities | `config.json` in your user config folder (on Windows, `%LOCALAPPDATA%\birdwatcher`) |
+| Settings: the course folder, recent courses, editor, theme, split, shown severities, AI provider and model | `config.json` in your user config folder (on Windows, `%LOCALAPPDATA%\birdwatcher`) |
+| API keys saved with **Set key…**, one per provider | The system keyring, under the service name `birdwatcher` |
 | Fixed findings, per course folder | `fixes.json`, next to the settings |
 | Ignored findings and their reasons, per course folder | `ignored.json`, next to the settings |
 | Answers from web sites, for a day | `links.json`, next to the settings |
 | The downloaded demo course | `demo/` in your user cache folder (on Windows, `%LOCALAPPDATA%\birdwatcher\Cache`) |
 
-**Reset everything…** on the setup page deletes all of these.
+**Reset everything…** on the setup page deletes all of these. API keys in environment variables are yours, and stay.
 
 ### Findings
 
@@ -163,9 +180,9 @@ Checks produce findings as plain data: the check, the severity, the file and lin
 
 | Folder | Holds |
 |---|---|
-| `birdwatcher/core/` | Findings and fixes, the check interface, running checks over a course folder, the saved settings, a course's word list, asking web sites about links, and the demo download. No user interface code. |
+| `birdwatcher/core/` | Findings and fixes, the check interface, running checks over a course folder, the saved settings, a course's word list, asking web sites about links, the demo download, and talking to chat completion APIs (`core/ai.py`). No user interface code. |
 | `birdwatcher/checks/` | One module per check, and the registry of all checks; `checks/words/` holds the built-in spelling word lists. |
-| `birdwatcher/ui/` | Console output for `birdwatcher check`, desktop integrations (VS Code, the folder picker), and the Textual app in `ui/tui/`, one module per screen or dialog, styled by `birdwatcher.tcss`. |
+| `birdwatcher/ui/` | Console output for `birdwatcher check`, desktop integrations (VS Code, the folder picker, the keyring), and the Textual app in `ui/tui/`, one module per screen or dialog, styled by `birdwatcher.tcss`. |
 | `tools/` | Development scripts, such as refreshing the built-in word lists. |
 
 Dependencies point inward, from `ui` to `checks` to `core`, and a test enforces it. [AGENTS.md](AGENTS.md) has the full working rules: the layers, test-first development, and where new checks, screens and settings go.

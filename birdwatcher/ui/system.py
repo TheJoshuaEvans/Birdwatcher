@@ -1,10 +1,11 @@
 """
 Integrations with the user's desktop: editors (VS Code, Typora, the default
-app), the file browser and the system's folder picker.
+app), the file browser, the system's folder picker and its keyring.
 
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
+import contextlib
 import os
 import shutil
 import subprocess
@@ -14,10 +15,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import keyring
+import keyring.errors
+
+from birdwatcher.core.ai import KeyStore
+
 EDITOR_COMMAND = "code"  # VS Code's command-line launcher
 VSCODE, TYPORA, DEFAULT_APP = "vscode", "typora", "default"  # editor ids
 COMMAND_TIMEOUT = 3  # seconds to wait for a settings query
 FOLDER_PICKER_TITLE = "Choose the course repository's folder"
+KEYRING_SERVICE = "birdwatcher"  # the keyring entries' service name
 
 
 def editor_url(path, line=None):
@@ -229,6 +236,40 @@ def _ask(command):
     except (OSError, subprocess.SubprocessError):
         return None
     return result.stdout if result.returncode == 0 else None
+
+
+def system_key_store():
+    """
+    API keys kept in the system's keyring (Windows Credential Manager, the
+    macOS Keychain, or the Secret Service on Linux), one entry per provider
+    under the service KEYRING_SERVICE.
+
+    Returns:
+        KeyStore: get returns None when the keyring has no key or cannot be
+            read; set raises OSError when the keyring cannot store one;
+            delete does nothing when there is no key or no keyring.
+    """
+
+    def get(provider_id):
+        try:
+            return keyring.get_password(KEYRING_SERVICE, provider_id)
+        except keyring.errors.KeyringError:
+            return None
+
+    def set_key(provider_id, key):
+        try:
+            keyring.set_password(KEYRING_SERVICE, provider_id, key)
+        except keyring.errors.KeyringError as error:
+            raise OSError(
+                f"The system keyring could not save the key: {error}"
+            ) from error
+
+    def delete(provider_id):
+        # PasswordDeleteError (no such key) is a KeyringError too.
+        with contextlib.suppress(keyring.errors.KeyringError):
+            keyring.delete_password(KEYRING_SERVICE, provider_id)
+
+    return KeyStore(get=get, set=set_key, delete=delete)
 
 
 def show_in_file_browser(folder):

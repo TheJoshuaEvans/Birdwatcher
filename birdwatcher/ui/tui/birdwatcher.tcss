@@ -238,14 +238,119 @@ IgnoreDialog, FixAllDialog, KeysDialog, ResetDialog {
     margin-right: 2;
 }
 
-/* Setup page */
-#setup {
+/* Setup page: COURSE and AI MODEL tabs over one framed page each */
+#setup-tabs {
+    height: 1;
+    max-width: 100;
+    margin: 1 0 0 0;
+}
+
+#setup-tabs Underline {
+    display: none;
+}
+
+#setup-tabs Tab {
+    height: 1;
+    padding: 0 1;
+}
+
+#setup-tabs Tab.-active {
+    background: $accent;
+    color: $background;
+    text-style: bold;
+}
+
+#setup, #setup-ai {
     padding: 1 2;
     max-width: 100;
     border: double $accent;
     border-title-align: left;
     border-title-style: bold;
     border-title-color: $accent;
+}
+
+#ai-panel {
+    height: auto;
+}
+
+#ai-provider {
+    width: auto;
+}
+
+#ai-key-buttons, #ai-model-row, #chat-row, #setup-ai-buttons {
+    height: auto;
+}
+
+#ai-key-buttons Button, #chat-row Button, #ai-model-row Button {
+    margin-left: 1;
+}
+
+#ai-key-buttons Button {
+    margin: 0 1 0 0;
+}
+
+#ai-model, #chat-input {
+    width: 1fr;
+}
+
+#ai-model-info {
+    color: $text-muted;
+}
+
+#chat-log {
+    height: 12;
+    border: round $accent 50%;
+    padding: 0 1;
+}
+
+.chat-line {
+    margin-bottom: 1;
+}
+
+/* Always in view: the AI page is taller than most windows */
+#setup-ai-buttons {
+    dock: bottom;
+    padding-top: 1;
+    background: $background;
+}
+
+KeyDialog, ModelPicker {
+    align: center middle;
+}
+
+#key-dialog, #model-picker {
+    width: 90;
+    max-width: 95%;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    border: double $accent;
+    border-title-align: left;
+    border-title-style: bold;
+    border-title-color: $accent;
+    background: $surface;
+}
+
+#key-input {
+    margin-top: 1;
+}
+
+#key-buttons {
+    height: auto;
+    margin-top: 1;
+}
+
+#key-buttons Button {
+    margin-right: 2;
+}
+
+#model-status {
+    margin: 1 0;
+    color: $text-muted;
+}
+
+#model-list {
+    height: 20;
 }
 
 #setup-intro {

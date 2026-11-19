@@ -16,6 +16,7 @@ the source lines around it. Mouse and keyboard both work:
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
+import os
 import webbrowser
 from collections.abc import Callable, Mapping
 from dataclasses import replace
@@ -28,6 +29,14 @@ from textual import work
 from textual.app import App
 
 from birdwatcher.checks import ALL_CHECKS
+from birdwatcher.core.ai import (
+    PROVIDERS,
+    KeyStore,
+    ModelInfo,
+    Reply,
+    chat,
+    list_models,
+)
 from birdwatcher.core.config import (
     DEFAULT_EDITOR,
     THEME_AUTO,
@@ -47,6 +56,7 @@ from birdwatcher.ui.system import (
     choose_folder_dialog,
     desktop_editors,
     show_in_file_browser,
+    system_key_store,
     system_prefers_dark,
 )
 
@@ -100,6 +110,10 @@ class BirdwatcherApp(App):
     so and typing the path still works. Every chosen folder goes to the front
     of the recent list. From the findings, s reopens the setup page filled in
     with the current folder, and Escape there returns without changes.
+
+    AI model: the setup page's AI MODEL tab (see ai_panel.AiPanel) chooses
+    the chat completion provider and model, saved with the rest of the page
+    (keys go to `keys`, never the settings file), and holds a test chat.
 
     Theme: the setup page also lists the color themes, starting with "Match
     the system", the default, which shows textual-light in the system's light
@@ -178,6 +192,15 @@ class BirdwatcherApp(App):
             like a course with DEMO in the title, but is never saved as the
             course or added to the recent list; choosing a course on the
             setup page leaves it.
+        keys (KeyStore | None): Where API keys are saved; None means
+            system.system_key_store() (the system keyring). RESET EVERYTHING
+            forgets every provider's saved key.
+        environ (Mapping[str, str] | None): The environment variables, for
+            API keys; None means os.environ.
+        send_chat (Callable[[Connection, list[dict]], Reply]): Sends the test
+            chat's conversation (core.ai.chat).
+        fetch_models (Callable[[Connection], list[ModelInfo]]): Lists a
+            provider's models (core.ai.list_models).
     """
 
     TITLE = "BIRDWATCHER"
@@ -197,8 +220,18 @@ class BirdwatcherApp(App):
         ignore_path: Path | None = None,
         prefers_dark: Callable[[], bool | None] = system_prefers_dark,
         demo: DemoCourse | None = None,
+        keys: KeyStore | None = None,
+        environ: Mapping[str, str] | None = None,
+        send_chat: Callable[..., Reply] = chat,
+        fetch_models: Callable[..., list[ModelInfo]] = list_models,
     ):
         super().__init__()
+        # Created here, not as a default: a test that passes no store must not
+        # reach the real keyring at import time.
+        self._keys = system_key_store() if keys is None else keys
+        self._environ = os.environ if environ is None else environ
+        self._send_chat = send_chat
+        self._fetch_models = fetch_models
         self._prefers_dark = prefers_dark
         self._demo = demo or DemoCourse(user_cache_dir("birdwatcher", appauthor=False))
         self._in_demo = False
@@ -248,6 +281,8 @@ class BirdwatcherApp(App):
 
     def _setup(self, course_dir, problem, can_cancel):
         config = self._config
+        # Before the first save, the AI tab starts from the default settings.
+        settings = config or Config(course_dir=Path())
         return SetupScreen(
             course_dir,
             problem,
@@ -262,6 +297,13 @@ class BirdwatcherApp(App):
             reset=self._reset_everything,
             start_demo=self._start_demo,
             demo_ready=self._demo.ready(),
+            ai_provider=settings.ai_provider,
+            ai_model=settings.ai_model,
+            ai_url=settings.ai_url,
+            keys=self._keys,
+            environ=self._environ,
+            send_chat=self._send_chat,
+            fetch_models=self._fetch_models,
         )
 
     def _start_demo(self, refresh):
@@ -314,6 +356,8 @@ class BirdwatcherApp(App):
             link_cache,
         ):
             path.unlink(missing_ok=True)
+        for provider_id in PROVIDERS:
+            self._keys.delete(provider_id)
         self._demo.forget()
         self._in_demo = False
         self.title = self.TITLE
@@ -334,9 +378,15 @@ class BirdwatcherApp(App):
         self._in_demo = False
         self.title = self.TITLE
         base = self._config or Config(course_dir=choice.course_dir, recent=())
-        self._config = with_course(
-            replace(base, editor=choice.editor, theme=choice.theme), choice.course_dir
+        chosen = replace(
+            base,
+            editor=choice.editor,
+            theme=choice.theme,
+            ai_provider=choice.ai_provider,
+            ai_model=choice.ai_model,
+            ai_url=choice.ai_url,
         )
+        self._config = with_course(chosen, choice.course_dir)
         save_config(self._config_path, self._config)
         self._apply_theme(choice.theme)
         self._show_findings(choice.course_dir)

@@ -9,6 +9,8 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "codespell>=2.4.3",
+    "keyring>=25.7.0",
+    "openai>=3.55.1",
     "platformdirs>=4.14.5",
     "pyspellchecker>=0.9.1",
     "rich>=15.0.0",
