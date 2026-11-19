@@ -85,6 +85,12 @@ class SetupScreen(Screen):
     tab saves everything on both; from AI MODEL, a course folder that cannot
     be used switches to COURSE and shows why.
 
+    Keys: Ctrl+T switches tabs (focusing the tab strip) and Ctrl+S saves,
+    from anywhere on the page; Ctrl+O browses, on COURSE only. Escape in a
+    text box leaves the box (focusing the tab strip, keeping what was
+    typed); elsewhere it goes back, as q does outside a text box. The footer
+    shows only the keys that apply.
+
     Args:
         course_dir (Path | None): The path to fill in.
         problem (str | None): Why that path cannot be used, shown at once.
@@ -119,7 +125,11 @@ class SetupScreen(Screen):
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("ctrl+t", "switch_tab", "Switch tab"),
+        Binding("ctrl+s", "save", "Save"),
         Binding("ctrl+o", "browse", "Browse"),
+        # Escape in a text box only leaves the box; nothing typed is lost.
+        Binding("escape", "leave_box", "Leave the box"),
         Binding("escape", "cancel", "Back"),
         # q leaves: back to the course, or (on a first run, with nothing to go
         # back to) out of Birdwatcher. In the path box it is just a letter.
@@ -195,7 +205,7 @@ class SetupScreen(Screen):
                 fetch_models=self._ai["fetch_models"],
             )
             with Horizontal(id="setup-ai-buttons"):
-                yield Button(Content("[↵] SAVE"), variant="primary", id="save-ai")
+                yield Button(Content("[^S] SAVE"), variant="primary", id="save-ai")
         with VerticalScroll(id="setup"):
             yield Static(SETUP_INTRO, id="setup-intro")
             recent_label = Static("RECENT COURSES", classes="setup-section")
@@ -235,7 +245,7 @@ class SetupScreen(Screen):
             )
             yield Static(self._problem or "", id="setup-error")
             with Horizontal(id="setup-buttons"):
-                yield Button(Content("[↵] SAVE"), variant="primary", id="save")
+                yield Button(Content("[^S] SAVE"), variant="primary", id="save")
                 if self._start_demo is not None:
                     yield Button(Content("TRY THE DEMO"), id="try-demo")
                     refresh = Button(Content("REFRESH DEMO"), id="refresh-demo")
@@ -270,8 +280,30 @@ class SetupScreen(Screen):
         on_ai = event.tab.id == "tab-ai"
         self.query_one("#setup-ai").display = on_ai
         self.query_one("#setup").display = not on_ai
+        self.refresh_bindings()
+
+    def on_descendant_focus(self, event):
+        self.refresh_bindings()  # Escape's meaning depends on the focus
+
+    def action_switch_tab(self):
+        tabs = self.query_one("#setup-tabs", Tabs)
+        tabs.active = "tab-ai" if tabs.active == "tab-course" else "tab-course"
+        tabs.focus()  # the focused box may be on the tab just hidden
+
+    def action_save(self):
+        self._choose(self._typed_folder())
+
+    def action_leave_box(self):
+        self.query_one("#setup-tabs", Tabs).focus()
+
+    def _in_text_box(self):
+        return isinstance(self.focused, Input)
 
     def check_action(self, action, parameters):
+        if action == "leave_box":
+            return self._in_text_box()
+        if action == "browse":
+            return self.query_one("#setup-tabs", Tabs).active == "tab-course"
         if action == "cancel":
             return self._can_cancel
         if action == "quit_first_run":

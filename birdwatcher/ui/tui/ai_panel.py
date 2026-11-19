@@ -133,9 +133,10 @@ class AiPanel(Vertical):
         yield VerticalScroll(id="chat-log")
         with Horizontal(id="chat-row"):
             yield Input(
-                placeholder="Send a message to the model above", id="chat-input"
+                placeholder="Send a message to the model above (Enter sends)",
+                id="chat-input",
             )
-            yield Button(Content("[↵] SEND"), id="send-chat")
+            yield Button(Content("SEND"), id="send-chat")
             yield Button(Content("CLEAR"), id="clear-chat")
 
     def on_mount(self):

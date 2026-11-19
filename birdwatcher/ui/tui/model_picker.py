@@ -30,9 +30,11 @@ class ModelPicker(ModalScreen):
     length, as far as the provider lists them.
 
     Typing in #model-filter keeps the models whose id or name contain every
-    word typed (ignoring case). Choosing a model (Enter or a click on the
-    list, or Enter in the filter for the highlighted or first match) closes
-    the picker with its ModelInfo; Escape closes it with None.
+    word typed (ignoring case); Up, Down, PageUp and PageDown there move the
+    list's highlight while the filter keeps the focus. Choosing a model
+    (Enter or a click on the list, or Enter in the filter for the
+    highlighted match) closes the picker with its ModelInfo; Escape closes
+    it with None.
 
     Args:
         provider_name (str): The provider, named while loading.
@@ -42,6 +44,12 @@ class ModelPicker(ModalScreen):
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("escape", "cancel", "Cancel"),
+        # In the filter, these move the list's highlight; the list itself
+        # handles them first when it has the focus.
+        Binding("down", "move('cursor_down')", "Next", show=False),
+        Binding("up", "move('cursor_up')", "Previous", show=False),
+        Binding("pagedown", "move('page_down')", "Page down", show=False),
+        Binding("pageup", "move('page_up')", "Page up", show=False),
     ]
 
     def __init__(self, provider_name, load):
@@ -55,7 +63,7 @@ class ModelPicker(ModalScreen):
         with Vertical(id="model-picker") as picker:
             picker.border_title = Content("[ CHOOSE A MODEL ]")
             yield Input(
-                placeholder="Filter: words in the name, e.g. free, claude, gemma",
+                placeholder="Filter (free, claude, gemma...); ↑↓ to move, Enter to choose",
                 id="model-filter",
             )
             yield Static(
@@ -117,6 +125,9 @@ class ModelPicker(ModalScreen):
     def on_option_list_option_selected(self, event: OptionList.OptionSelected):
         event.stop()
         self.dismiss(self._shown[int(event.option.id)])
+
+    def action_move(self, how):
+        getattr(self.query_one("#model-list", OptionList), f"action_{how}")()
 
     def action_cancel(self):
         self.dismiss(None)
