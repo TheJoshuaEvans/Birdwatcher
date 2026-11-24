@@ -169,20 +169,72 @@ def check_spelling(repo_root):
                 if found is None:
                     continue
                 severity, options = found
-                in_code = code_spans is None or any(
-                    start <= word.column < end for start, end in code_spans
-                )
                 fix = None
-                if (
-                    len(options) == 1
-                    and word.standalone
-                    and not in_code
-                    and line.find(word.text) == word.column
-                ):
-                    fix = Fix(number, word.text, _same_case(word.text, options[0]))
+                if len(options) == 1 and fixable_in_place(word, line, code_spans):
+                    fix = Fix(number, word.text, same_case(word.text, options[0]))
                 message = _message(word.text, severity, options)
                 findings.append(Finding(CHECK, severity, path, number, message, fix))
     return sorted(findings, key=lambda finding: (finding.path, finding.line))
+
+
+def line_at(repo_root, path, number):
+    """
+    One line of a page or code file, read as the check reads it.
+
+    Args:
+        repo_root (Path): Root folder of the course repository.
+        path (str): The file, relative to repo_root.
+        number (int): 1-based line number.
+
+    Returns:
+        tuple[str, list[tuple[int, int]] | None] | None: The line and its
+            inline code spans as (start, end) columns (None when the whole
+            line is code), or None when the file or line is gone or the line
+            is a code fence.
+    """
+    page = Path(repo_root) / path
+    if not page.is_file():
+        return None
+    for found, line, code_spans in _lines(page):
+        if found == number:
+            return line, code_spans
+    return None
+
+
+def fixable_in_place(word, line, code_spans):
+    """
+    Whether a word can be replaced on its line without changing anything
+    else: it is in prose (not code), stands alone (not part of a name such as
+    max_length), and is the first occurrence of its text on the line.
+
+    Args:
+        word (Word): The word, as words_in found it in the line.
+        line (str): The line.
+        code_spans (list[tuple[int, int]] | None): As line_at gives them.
+
+    Returns:
+        bool: True when a fix to the word is safe.
+    """
+    in_code = code_spans is None or any(
+        start <= word.column < end for start, end in code_spans
+    )
+    return word.standalone and not in_code and line.find(word.text) == word.column
+
+
+def same_case(word, replacement):
+    """
+    A replacement in a word's letter case.
+
+    Args:
+        word (str): The word as written.
+        replacement (str): Its replacement, in lowercase.
+
+    Returns:
+        str: The replacement, Capitalized when the word is.
+    """
+    return (
+        replacement[:1].upper() + replacement[1:] if word[:1].isupper() else replacement
+    )
 
 
 def word_of(finding):
@@ -264,13 +316,6 @@ def _message(word, severity, options):
         shown = ", ".join(options[:MAX_SUGGESTIONS])
         return f"'{word}' is not in the dictionary. Did you mean one of: {shown}?"
     return f"'{word}' is not in the dictionary, and no word is close to it."
-
-
-def _same_case(word, replacement):
-    """The replacement in the word's letter case (Capitalized or lower)."""
-    return (
-        replacement[:1].upper() + replacement[1:] if word[:1].isupper() else replacement
-    )
 
 
 @cache
