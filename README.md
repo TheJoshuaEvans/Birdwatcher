@@ -12,7 +12,7 @@ A course's site is published by GitHub Pages either from its `docs/` folder (CS 
 
 Some of the courses already check that their links resolve, using [lychee](https://lychee.cli.rs/) in GitHub Actions. Birdwatcher checks links too, inside the site and out, in every course, and looks for what a link checker can't see: links to sections that don't exist, files left over from renumbering, accessibility problems, spelling, and code that breaks the course's own style rules.
 
-**Status:** all ten checks below work, with fixing, ignoring, filtering and a demo mode. Version [`v0.1.0`](https://github.com/TheJoshuaEvans/Birdwatcher/releases/tag/v0.1.0) is the CS 212 Lab 6 submission. Birdwatcher grows into the term project: Lab 7 adds analysis by a large language model, and the term project adds simulated students.
+**Status:** all ten checks below work, with fixing, ignoring, filtering and a demo mode, and an AI model can judge the spelling errors the dictionary cannot settle (see [Asking the AI](#asking-the-ai)). Version [`v0.1.0`](https://github.com/TheJoshuaEvans/Birdwatcher/releases/tag/v0.1.0) is the CS 212 Lab 6 submission; [`v0.2.0`](https://github.com/TheJoshuaEvans/Birdwatcher/releases/tag/v0.2.0) is the Lab 7 beta. Birdwatcher grows into the term project, which adds simulated students.
 
 ## Running Birdwatcher
 
@@ -22,7 +22,7 @@ With [uv](https://docs.astral.sh/uv/) installed, one command runs Birdwatcher st
 uvx --from git+https://github.com/TheJoshuaEvans/Birdwatcher birdwatcher
 ```
 
-Add `@` and a tag, branch or commit to run that version instead of the latest, for example `...Birdwatcher@v0.1.0` (the Lab 6 submission) or `...Birdwatcher@main`. Anything after `birdwatcher` is passed on, so `... birdwatcher check --list-checks` works too. To keep it installed as a `birdwatcher` command, use `uv tool install git+https://github.com/TheJoshuaEvans/Birdwatcher`.
+Add `@` and a tag, branch or commit to run that version instead of the latest, for example `...Birdwatcher@v0.2.0` (the Lab 7 beta), `...Birdwatcher@v0.1.0` (the Lab 6 submission) or `...Birdwatcher@main`. Anything after `birdwatcher` is passed on, so `... birdwatcher check --list-checks` works too. To keep it installed as a `birdwatcher` command, use `uv tool install git+https://github.com/TheJoshuaEvans/Birdwatcher`.
 
 ## Setup for development
 
@@ -75,7 +75,7 @@ In the app, mouse and keyboard both work. The bottom bar shows the keys for what
 | `C` | Forget every fixed finding of this course |
 | `i`, or **Ignore** / **Un-ignore** | Ignore a finding (with an optional reason), or bring back an ignored one |
 | `a`, or **Add to dictionary** | For a spelling finding: add the word to the course's `cspell.json`, so it is never reported again |
-| `m`, or **Ask AI** | For a spelling finding: ask the AI model whether the word is a typo or a word to keep. On a branch: ask about all its words that have no verdict yet, after showing the cost (see [Asking the AI](#asking-the-ai)) |
+| `m`, or **Ask AI** | For a spelling error: ask the AI model whether the word is a typo or a word to keep. On a branch: ask about its spelling errors that have no verdict yet, after showing the cost (see [Asking the AI](#asking-the-ai)) |
 | `h` | Show or hide ignored findings (the IGNORED chip) |
 | `r` | Run the checks again, after fixing something |
 | `ctrl+r` | Hard refresh: run the checks again, asking every web site afresh instead of reusing the day's answers |
@@ -96,12 +96,16 @@ Any finding can be ignored, with an optional reason ("kept for last term's stude
 
 **You decide when the AI model is used.** Birdwatcher never sends anything to a model on its own: checking a course, opening a finding and fixing all work without one. A model is asked only when you press `m`.
 
-The spelling check knows its dictionaries, not your course: it flags names, terms and code words, and for a real typo it often has several suggestions or none. `m` sends the flagged word, with the line it is on, to the model chosen on the **AI MODEL** tab, which answers with a verdict:
+The spelling check knows its dictionaries, not your course: it flags names, terms and code words. When it has exactly one suggestion (a warning) or the word is British (info), it offers the fix itself. The rest are **errors**: words with several suggestions or none, which only judgement can settle. The AI is asked about those errors only, never about a finding that already has a fix. `m` sends the flagged word, with the line it is on, to the model chosen on the **AI MODEL** tab, which answers with a verdict:
 
 - **typo**, with the correction. In prose, the correction becomes the finding's fix, shown as a before and after like any other (**AI fix**): `f` applies it, and **Undo** takes it back. In code, or inside a longer name, no fix is offered, because renaming one use of a name could break the code; fix it by hand.
-- **keep**: the word is spelled as meant (a name, a technical term, a word from code). The dictionary's suggestion is dropped, and `a` adds the word to the course's `cspell.json`.
+- **keep**: the word is spelled as meant (a name, a technical term, a word from code), and `a` adds it to the course's `cspell.json`.
 
-Each verdict shows its reason and the model that gave it. On a branch (the Spelling check, a folder, a file), `m` first shows what asking will cost: how many words, in how many requests (40 words each), and roughly how many tokens. Models that think before they answer use several times more; the notification afterwards gives the real count. Only words without a verdict are asked about, so asking twice never pays twice. Verdicts are remembered per course folder, in `spelling-verdicts.json` next to the settings; `m` on a single finding asks again, for a second opinion.
+Each verdict shows its reason and the model that gave it. A verdict belongs to a word in its line, not to the word: the same misspelling can mean different things in different places, so each line gets its own verdict, and editing a line clears its verdict (`m` asks again about the new wording). On a branch (the Spelling check, a folder, a file), `m` first shows what asking will cost: how many errors (each is asked about, even when the same line appears in several places), in how many requests (40 each), and roughly how many tokens. Models that think before they answer use several times more; the notification afterwards gives the real count. Only errors without a verdict are asked about, so asking twice never pays twice. Verdicts are remembered per course folder, in `spelling-verdicts.json` next to the settings; `m` on a single finding asks again, for a second opinion.
+
+While the model is asked, the strip at the bottom of the list says so: **ASKING**, the request being waited for ("request 2 of 3") and a running clock. A request can take a minute or more with a thinking model. `x` (or **STOP**) stops asking after the request already sent. When a model fails on its own (it answers without text, the provider has an error, or it takes too long), that request is sent once more, since a router may pick another model; failing again, it is skipped and asking carries on. A refused key, a rate limit or an unreachable provider stops asking. Afterwards the branch's detail keeps the outcome: verdicts on how many words, the tokens and time, anything skipped or stopped, and how many words still have no verdict (`m` asks about them).
+
+The default model, `openrouter/free`, sends each request to whichever free model is available, often a small one, so verdicts can differ between requests and between runs. The **AI MODEL** tab and the cost dialog say so; for steadier verdicts, choose a model with **Pick…**.
 
 ### Editors
 

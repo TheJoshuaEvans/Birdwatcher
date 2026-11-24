@@ -31,8 +31,11 @@ class AskAiDialog(ModalScreen):
 
     Args:
         branch (str): The branch's label (a check's title, a folder or file).
+        findings (int): The spelling errors to ask about.
         estimate (spelling_triage.Estimate): What asking will cost.
         model (str): The model that will be asked.
+        warning (str | None): A caution about that model
+            (core.ai.model_warning), shown last; None shows none.
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -40,32 +43,37 @@ class AskAiDialog(ModalScreen):
         Binding("enter", "confirm", "Ask"),
     ]
 
-    def __init__(self, branch, estimate, model):
+    def __init__(self, branch, findings, estimate, model, warning=None):
         super().__init__()
         self._branch = branch
+        self._findings = findings
         self._estimate = estimate
         self._model = model
+        self._warning = warning
 
     def compose(self) -> ComposeResult:
         estimate = self._estimate
         text = Text()
         text.append(f"{self._branch}\n\n", style="bold")
         text.append(
-            f"Ask {self._model} about {_plural(estimate.words, 'word', 'words')} "
-            f"in {_plural(estimate.requests, 'request', 'requests')}: about "
-            f"{estimate.tokens:,} tokens (models that think before answering "
-            "use several times more).\n\n"
+            f"Ask {self._model} about {_plural(self._findings, 'error', 'errors')} "
+            "(the words the dictionary cannot fix; warnings and info have their "
+            f"own fixes), in {_plural(estimate.requests, 'request', 'requests')}. "
+            f"About {estimate.tokens:,} tokens (models that think before "
+            "answering use several times more).\n\n"
         )
         text.append(
             "Each verdict arrives as a suggested fix, or as a word to keep. "
             "Nothing in your course folder changes until you apply them."
         )
+        if self._warning:
+            text.append(f"\n\nNOTE {self._warning}", style="italic")
         with Vertical(id="ask-ai-dialog") as dialog:
             dialog.border_title = Content("[ ASK THE AI? ]")
             yield Static(text, id="ask-ai-text")
             with Horizontal(id="ask-ai-buttons"):
                 yield Button(
-                    Content(f"[↵] ASK ABOUT {estimate.words:,}"),
+                    Content(f"[↵] ASK ABOUT {self._findings:,}"),
                     variant="success",
                     id="confirm-ask-ai",
                 )

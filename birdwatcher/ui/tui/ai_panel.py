@@ -25,6 +25,7 @@ from birdwatcher.core.ai import (
     connect,
     find_key,
     listing,
+    model_warning,
 )
 from birdwatcher.ui.tui.key_dialog import KeyDialog
 from birdwatcher.ui.tui.model_picker import ModelPicker, describe
@@ -52,7 +53,9 @@ class AiPanel(Vertical):
     MODEL: a box for the model's name (#ai-model) and PICK... (#pick-model),
     which lists the provider's models (model_picker.ModelPicker) and fills
     the box with the choice; #ai-model-info then names it, with its price
-    and context length.
+    and context length. #ai-model-warning shows core.ai.model_warning for
+    the provider and model in the box (OpenRouter's free router), and hides
+    when there is none.
 
     TEST CHAT: a message typed in #chat-input and sent (Enter or #send-chat)
     goes, with the conversation so far, to the provider and model chosen
@@ -131,6 +134,7 @@ class AiPanel(Vertical):
             )
             yield Button(Content("PICK…"), id="pick-model")
         yield Static(id="ai-model-info")
+        yield Static(id="ai-model-warning")
         yield Static("TEST CHAT", classes="setup-section")
         yield VerticalScroll(id="chat-log")
         with Horizontal(id="chat-row"):
@@ -143,6 +147,18 @@ class AiPanel(Vertical):
 
     def on_mount(self):
         self._show_key()
+        self._show_model_warning()
+
+    def on_input_changed(self, event: Input.Changed):
+        if event.input.id == "ai-model":
+            self._show_model_warning()
+
+    def _show_model_warning(self):
+        model = self.query_one("#ai-model", Input).value
+        warning = model_warning(self._provider, model)
+        shown = self.query_one("#ai-model-warning", Static)
+        shown.update(Text(f"NOTE {warning}" if warning else "", style="italic"))
+        shown.display = warning is not None
 
     # Provider
 
@@ -157,6 +173,7 @@ class AiPanel(Vertical):
         self.query_one("#ai-url", Input).display = self._provider == CUSTOM
         self.query_one("#ai-model-info", Static).update("")
         self._show_key()
+        self._show_model_warning()
 
     # Key
 

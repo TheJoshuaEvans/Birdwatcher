@@ -7,6 +7,11 @@ a typo (with the correction) or a word to keep (a name, term or code name that
 belongs in the course's word list). A typo verdict becomes an ordinary Fix;
 nothing here writes to the course.
 
+Only spelling errors are asked about (asks_ai): warnings and info have a fix
+from the dictionary. A verdict belongs to a word in its line, not to the
+word: the same misspelling can mean different things in different places. A
+line that is edited no longer has one.
+
 Nothing here calls a model on its own: the caller asks, with a function that
 sends one conversation (see triage), only when the user asks for it.
 
@@ -27,10 +32,10 @@ from birdwatcher.checks.spelling import (
 )
 from birdwatcher.core.ai import AiError
 from birdwatcher.core.course_store import read_entries, write_entries
-from birdwatcher.core.findings import Fix
+from birdwatcher.core.findings import Fix, Severity
 
 TYPO, KEEP = "typo", "keep"  # the verdicts a model can give
-WORDS_PER_REQUEST = 40  # words asked about in one request
+WORDS_PER_REQUEST = 40  # questions (a word in its line) asked in one request
 CONTEXT_CHARS = 160  # at most this much of a word's line is sent with it
 CHARS_PER_TOKEN = 4  # a rough rule for estimating tokens from text
 ANSWER_TOKENS_PER_WORD = 30  # a rough allowance for one verdict in an answer
@@ -42,17 +47,20 @@ written for beginning programmers. A spell checker flagged the words below. \
 It does not know names, technical terms or code, so many flagged words are \
 correct.
 
-Judge each word by the line it appears on, and give one verdict:
+The items are numbered. Judge each word by its own line only (the same word \
+can mean different things in different lines), and give one verdict:
 - "typo": misspelled. Give the correction exactly as it belongs in that \
 line, with any capitals it needs. British spellings are typos: the course \
 uses American English.
-- "keep": spelled correctly. A name, product, library, technical term, \
-abbreviation or name from code. It belongs in the course's word list.
+- "keep": spelled correctly, or misspelled on purpose. A name, product, \
+library, technical term, abbreviation or name from code. It belongs in the \
+course's word list.
 
 Answer with JSON only, no other text:
-{"verdicts": [{"word": "<the word as given>", "verdict": "typo" or "keep", \
-"correction": "<the correction>" or null, "reason": "<at most 12 words>"}]}
-Give exactly one verdict for every word."""
+{"verdicts": [{"id": <the item's number>, "word": "<the word as given>", \
+"verdict": "typo" or "keep", "correction": "<the correction>" or null, \
+"reason": "<at most 12 words>"}]}
+Give exactly one verdict for every item."""
 
 RETRY = "That answer could not be used: {error} Answer again with the JSON only."
 FENCED = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
@@ -63,11 +71,12 @@ _log = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class Question:
     """
-    A flagged word to ask about, with where it was first found.
+    A flagged word in its line, to ask about.
 
     Attributes:
         word (str): The word as written there, e.g. "Sonet".
-        path (str): The file it is in, relative to the course root.
+        path (str): The file it is in (the first, when the same line is in
+            several), relative to the course root.
         context (str): Its line, stripped and cut to at most CONTEXT_CHARS
             characters around the word.
     """
@@ -76,14 +85,21 @@ class Question:
     path: str
     context: str
 
+    @property
+    def key(self):
+        """tuple[str, str]: (the word lowercased, the context): what a
+        verdict on it is found by."""
+        return (self.word.lower(), self.context)
+
 
 @dataclass(frozen=True)
 class Verdict:
     """
-    A model's ruling on a word.
+    A model's ruling on a word in its line.
 
     Attributes:
         word (str): The word, lowercased.
+        context (str): The line it rules on, as in Question.context.
         kind (str): TYPO or KEEP.
         correction (str | None): For a typo, the word as it should be written
             (with any capitals it needs, e.g. "Papert"); None for KEEP.
@@ -92,24 +108,30 @@ class Verdict:
     """
 
     word: str
+    context: str
     kind: str
     correction: str | None
     reason: str
     model: str
 
+    @property
+    def key(self):
+        """tuple[str, str]: (word, context), as Question.key."""
+        return (self.word, self.context)
+
 
 @dataclass(frozen=True)
 class Estimate:
     """
-    What asking about some words will cost, before anything is sent.
+    What asking some questions will cost, before anything is sent.
 
     Attributes:
-        words (int): Distinct words to ask about.
+        questions (int): Questions to ask (words in their lines).
         requests (int): Requests needed (WORDS_PER_REQUEST per request).
         tokens (int): Rough total of tokens read and written.
     """
 
-    words: int
+    questions: int
     requests: int
     tokens: int
 
@@ -120,9 +142,10 @@ class TriageResult:
     The outcome of asking about some words.
 
     Attributes:
-        verdicts (dict[str, Verdict]): Valid verdicts by lowercased word.
-        unanswered (list[str]): Lowercased words asked about with no valid
-            verdict, in the order asked.
+        verdicts (dict[tuple[str, str], Verdict]): Valid verdicts by
+            Question.key.
+        unanswered (list[str]): The lowercased word of each question with no
+            valid verdict, in the order asked.
         input_tokens (int): Tokens read, as the provider reported them (0 when
             it reported none).
         output_tokens (int): Tokens written, likewise.
@@ -131,14 +154,17 @@ class TriageResult:
             from requests before it are kept.
         failures (list[str]): Requests given up after failing twice while
             asking carried on, each as "request N of M: <reason>".
+        stopped (bool): Whether asking was stopped on request (should_stop)
+            before every request was sent.
     """
 
-    verdicts: dict[str, Verdict]
+    verdicts: dict[tuple[str, str], Verdict]
     unanswered: list[str]
     input_tokens: int
     output_tokens: int
     error: str | None = None
     failures: list[str] = field(default_factory=list)
+    stopped: bool = False
 
 
 class VerdictError(Exception):
@@ -146,9 +172,24 @@ class VerdictError(Exception):
     words the model can act on when it is asked again."""
 
 
+def asks_ai(finding):
+    """
+    Whether the AI is asked about a finding: only spelling errors, the words
+    with no suggestion or several, which the dictionary cannot fix. Warnings
+    and info have a fix of their own (or need none), so they are never sent.
+
+    Args:
+        finding (Finding): Any finding.
+
+    Returns:
+        bool: True for a spelling finding of severity ERROR.
+    """
+    return word_of(finding) is not None and finding.severity == Severity.ERROR
+
+
 def questions_for(course_dir, findings):
     """
-    The questions to ask about some findings: one per distinct word.
+    The questions to ask about some findings: one per finding, in order.
 
     Args:
         course_dir (Path): The course's root folder.
@@ -156,18 +197,69 @@ def questions_for(course_dir, findings):
             with a line are used.
 
     Returns:
-        list[Question]: One per word, ignoring letter case, for its first
-            finding in the order given, whose file supplies the context
-            (empty context when the file or line is gone).
+        list[Question]: Each finding's word in its line (empty context when
+            the file or line is gone).
     """
-    questions = {}
-    for finding in findings:
-        word = word_of(finding)
-        if word is None or finding.line is None or word.lower() in questions:
-            continue
-        context = _context(course_dir / finding.path, finding.line, word)
-        questions[word.lower()] = Question(word, finding.path, context)
-    return list(questions.values())
+    return [
+        Question(word_of(finding), finding.path, context_for(course_dir, finding))
+        for finding in findings
+        if word_of(finding) is not None and finding.line is not None
+    ]
+
+
+def context_for(course_dir, finding):
+    """
+    A spelling finding's line, as a question sends it (Question.context).
+
+    Args:
+        course_dir (Path): The course's root folder.
+        finding (Finding): A spelling finding.
+
+    Returns:
+        str: Its line, stripped and cut around the word; "" when the finding
+            has no line or word, or the file or line is gone.
+    """
+    word = word_of(finding)
+    if word is None or finding.line is None:
+        return ""
+    return _context(course_dir / finding.path, finding.line, word)
+
+
+def verdict_for(course_dir, finding, verdicts):
+    """
+    The verdict on a spelling finding's word in its line, as it is now.
+
+    Args:
+        course_dir (Path): The course's root folder.
+        finding (Finding): Any finding.
+        verdicts (Mapping[tuple[str, str], Verdict]): Verdicts by key.
+
+    Returns:
+        Verdict | None: None for another check's finding, or when the word
+            has no verdict in that line (never asked, or the line changed).
+    """
+    key = verdict_key(course_dir, finding)
+    return None if key is None else verdicts.get(key)
+
+
+def verdict_key(course_dir, finding):
+    """
+    The key a verdict on a spelling finding is found by, as its line is now
+    (what verdict_for looks up; for callers that keep keys between files'
+    changes).
+
+    Args:
+        course_dir (Path): The course's root folder.
+        finding (Finding): Any finding.
+
+    Returns:
+        tuple[str, str] | None: As Question.key; None for another check's
+            finding.
+    """
+    word = word_of(finding)
+    if word is None:
+        return None
+    return (word.lower(), context_for(course_dir, finding))
 
 
 def estimate(questions):
@@ -178,8 +270,8 @@ def estimate(questions):
         questions (Sequence[Question]): The questions.
 
     Returns:
-        Estimate: The words, requests and rough tokens (the prompts' length
-            plus an allowance for each answer, by CHARS_PER_TOKEN). No
+        Estimate: The questions, requests and rough tokens (the prompts'
+            length plus an allowance for each answer, by CHARS_PER_TOKEN). No
             questions cost nothing.
     """
     batches = _batches(questions)
@@ -199,12 +291,12 @@ def messages_for(questions):
 
     Returns:
         list[dict[str, str]]: A system message with the rules (the same for
-            every request) and a user message listing each word with its file
-            and line.
+            every request) and a user message listing the questions,
+            numbered from 1, each word with its file and line.
     """
     listed = "\n".join(
-        f'- "{question.word}" in {question.path}: {question.context}'
-        for question in questions
+        f'{number}. "{question.word}" in {question.path}: {question.context}'
+        for number, question in enumerate(questions, start=1)
     )
     return [
         {"role": "system", "content": RULES},
@@ -217,19 +309,23 @@ def read_verdicts(text, questions, model):
     The verdicts in a model's answer.
 
     The answer is JSON, possibly wrapped in a Markdown code fence or a
-    sentence: {"verdicts": [{"word", "verdict", "correction", "reason"}]} or
-    the bare list. An entry is dropped when its word was not asked about,
-    its verdict is not TYPO or KEEP, or a typo's correction is missing, blank
-    or the word itself unchanged.
+    sentence: {"verdicts": [{"id", "word", "verdict", "correction",
+    "reason"}]} or the bare list. An entry answers the question its id
+    numbers (from 1, as messages_for numbers them; a number in a string
+    counts too), when that question's word is the entry's word, ignoring
+    letter case; an entry without an id answers the one question with its
+    word, if only one has it. Other entries are dropped, and so are those
+    whose verdict is not TYPO or KEEP, or whose typo's correction is
+    missing, blank or the word itself unchanged.
 
     Args:
         text (str): The model's answer.
-        questions (Sequence[Question]): The words asked about.
+        questions (Sequence[Question]): The questions, in the order asked.
         model (str): The model that answered, recorded on each verdict.
 
     Returns:
-        dict[str, Verdict]: By lowercased word (the first entry for a word
-            wins).
+        dict[tuple[str, str], Verdict]: By Question.key (the first entry for
+            a question wins).
 
     Raises:
         VerdictError: The answer holds no JSON, or JSON of another shape.
@@ -238,18 +334,26 @@ def read_verdicts(text, questions, model):
     entries = data.get("verdicts") if isinstance(data, dict) else data
     if not isinstance(entries, list):
         raise VerdictError('It was not {"verdicts": [...]}.')
-    asked = {question.word.lower() for question in questions}
+    by_word = {}
+    for question in questions:
+        by_word.setdefault(question.word.lower(), []).append(question)
     verdicts = {}
     for entry in entries:
-        verdict = _verdict(entry, model)
-        if verdict and verdict.word in asked and verdict.word not in verdicts:
-            verdicts[verdict.word] = verdict
+        question = _question_answered(entry, questions, by_word)
+        verdict = None if question is None else _verdict(entry, question, model)
+        if verdict is not None and verdict.key not in verdicts:
+            verdicts[verdict.key] = verdict
     return verdicts
 
 
-def triage(questions, ask):
+def triage(questions, ask, on_request=None, should_stop=None):
     """
     Ask a model about some words, WORDS_PER_REQUEST at a time.
+
+    Before each request, should_stop() is asked: True stops asking (a request
+    already sent is never interrupted), leaving the remaining words
+    unanswered. Then on_request(number, total) is told which request is
+    being sent, from 1.
 
     An answer with no readable verdicts is sent back once, with what was
     wrong, before its words count as unanswered. A request that fails in a
@@ -263,6 +367,10 @@ def triage(questions, ask):
         ask (Callable[[list[dict[str, str]]], Reply]): Sends one
             conversation and returns the model's answer (core.ai.chat with a
             connection). Raises AiError when it fails.
+        on_request (Callable[[int, int], object] | None): Told each request's
+            number and the number of requests, before it is sent.
+        should_stop (Callable[[], bool] | None): Asked before each request;
+            None never stops.
 
     Returns:
         TriageResult: The verdicts, the words left unanswered (a skipped
@@ -271,7 +379,9 @@ def triage(questions, ask):
     """
     verdicts, unanswered, failures = {}, [], []
     tokens = [0, 0]  # read, written
-    error = None
+    error, stopped = None, False
+    should_stop = should_stop or (lambda: False)
+    on_request = on_request or (lambda number, total: None)
 
     def asked(messages):
         reply = ask(messages)
@@ -282,6 +392,12 @@ def triage(questions, ask):
     batches = _batches(questions)
     for number, batch in enumerate(batches):
         where = f"request {number + 1} of {len(batches)}"
+        if should_stop():
+            _log.info("stopped before %s", where)
+            stopped = True
+            unanswered += [q.word.lower() for later in batches[number:] for q in later]
+            break
+        on_request(number + 1, len(batches))
         words = ", ".join(question.word for question in batch)
         _log.info("%s: %d words: %s", where, len(batch), words)
         try:
@@ -299,14 +415,16 @@ def triage(questions, ask):
                 ]
                 break
         verdicts.update(found)
-        unanswered += [q.word.lower() for q in batch if q.word.lower() not in found]
+        unanswered += [q.word.lower() for q in batch if q.key not in found]
     _log.info(
         "triage done: %d verdicts, %d words unanswered%s",
         len(verdicts),
         len(unanswered),
         f": {', '.join(unanswered)}" if unanswered else "",
     )
-    return TriageResult(verdicts, unanswered, tokens[0], tokens[1], error, failures)
+    return TriageResult(
+        verdicts, unanswered, tokens[0], tokens[1], error, failures, stopped
+    )
 
 
 def ai_fix(course_dir, finding, verdict):
@@ -356,14 +474,16 @@ def load_verdicts(path, course_dir):
         course_dir (Path): The course folder.
 
     Returns:
-        dict[str, Verdict]: By lowercased word; unreadable entries are left
-            out. Empty when there are none.
+        dict[tuple[str, str], Verdict]: By key; unreadable entries, and
+            entries without their line, are left out. Empty when there are
+            none.
     """
     verdicts = {}
     for entry in read_entries(path, course_dir):
         try:
             verdict = Verdict(
                 word=entry["word"],
+                context=entry["context"],
                 kind=entry["kind"],
                 correction=entry["correction"],
                 reason=entry["reason"],
@@ -371,7 +491,7 @@ def load_verdicts(path, course_dir):
             )
         except (KeyError, TypeError):
             continue
-        verdicts[verdict.word] = verdict
+        verdicts[verdict.key] = verdict
     return verdicts
 
 
@@ -383,11 +503,12 @@ def save_verdicts(path, course_dir, verdicts):
     Args:
         path (Path): The verdict file.
         course_dir (Path): The course folder.
-        verdicts (Mapping[str, Verdict]): Everything to remember.
+        verdicts (Mapping[tuple[str, str], Verdict]): Everything to remember.
     """
     entries = [
         {
             "word": verdict.word,
+            "context": verdict.context,
             "kind": verdict.kind,
             "correction": verdict.correction,
             "reason": verdict.reason,
@@ -482,22 +603,38 @@ def _json_in(text):
     raise VerdictError("It held no JSON.")
 
 
-def _verdict(entry, model):
-    """One entry as a Verdict, or None when it is unusable."""
-    if not isinstance(entry, dict):
+def _question_answered(entry, questions, by_word):
+    """The question an entry answers (see read_verdicts), or None."""
+    if not isinstance(entry, dict) or not isinstance(entry.get("word"), str):
         return None
-    word, kind = entry.get("word"), entry.get("verdict")
-    if not isinstance(word, str) or not isinstance(kind, str):
+    word = entry["word"].strip().lower()
+    number = entry.get("id")
+    if isinstance(number, str) and number.strip().isdigit():
+        number = int(number)
+    if isinstance(number, int) and not isinstance(number, bool):
+        if 1 <= number <= len(questions):
+            question = questions[number - 1]
+            return question if question.word.lower() == word else None
         return None
-    word, kind = word.strip(), kind.strip().lower()
+    same_word = by_word.get(word, [])
+    return same_word[0] if len(same_word) == 1 else None
+
+
+def _verdict(entry, question, model):
+    """An entry as the Verdict on its question, or None when unusable."""
+    kind = entry.get("verdict")
+    if not isinstance(kind, str):
+        return None
+    kind = kind.strip().lower()
     reason = entry.get("reason")
     reason = reason.strip() if isinstance(reason, str) else ""
+    word, context = question.key
     if kind == KEEP:
-        return Verdict(word.lower(), KEEP, None, reason, model)
+        return Verdict(word, context, KEEP, None, reason, model)
     correction = entry.get("correction")
     if kind != TYPO or not isinstance(correction, str):
         return None
     correction = correction.strip()
-    if not correction or correction == word:
+    if not correction or correction == question.word:
         return None
-    return Verdict(word.lower(), TYPO, correction, reason, model)
+    return Verdict(word, context, TYPO, correction, reason, model)

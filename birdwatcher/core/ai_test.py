@@ -31,6 +31,7 @@ from birdwatcher.core.ai import (
     list_models,
     listing,
     memory_key_store,
+    model_warning,
 )
 
 SECRET = "sk-or-v1-secret-test-key"
@@ -144,6 +145,23 @@ def test_a_memory_key_store_keeps_keys_in_the_given_dictionary():
     assert store.get("openrouter") == "sk-or-2"
     assert store.get("gemini") is None
     assert keys == {"openrouter": "sk-or-2"}
+
+
+# model_warning
+
+
+def test_the_free_router_comes_with_a_warning():
+    warning = model_warning(OPENROUTER, " openrouter/free ")
+    assert "differ" in warning and "free model" in warning
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "model"),
+    [(OPENROUTER, "google/gemma-4-31b-it:free"), (CUSTOM, "openrouter/free")],
+    ids=["a-chosen-model", "another-provider"],
+)
+def test_other_models_need_no_warning(provider_id, model):
+    assert model_warning(provider_id, model) is None
 
 
 # connect

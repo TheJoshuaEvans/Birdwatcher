@@ -132,6 +132,19 @@ def test_setup_has_a_course_tab_and_an_ai_model_tab(tmp_path):
     drive(app, steps)
 
 
+def test_the_free_router_is_shown_with_its_warning(tmp_path):
+    app, _, _ = ai_app(tmp_path)  # the default: openrouter/free
+
+    async def steps(app, pilot):
+        await open_ai_tab(app, pilot)
+        assert "differ" in text(app, "#ai-model-warning")
+        app.screen.query_one("#ai-model", Input).value = "google/gemma-4-31b-it:free"
+        await settle(app, pilot)
+        assert not is_visible(app, "#ai-model-warning")
+
+    drive(app, steps)
+
+
 def test_the_saved_provider_and_model_are_filled_in(tmp_path):
     config = {"ai_provider": GEMINI, "ai_model": "gemini-flash-latest"}
     app, _, _ = ai_app(tmp_path, config)

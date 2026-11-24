@@ -22,6 +22,7 @@ from birdwatcher.checks.spelling_triage import (
     Verdict,
     VerdictError,
     ai_fix,
+    asks_ai,
     estimate,
     load_verdicts,
     messages_for,
@@ -29,6 +30,7 @@ from birdwatcher.checks.spelling_triage import (
     read_verdicts,
     save_verdicts,
     triage,
+    verdict_for,
 )
 from birdwatcher.core.ai import AiError, Reply
 from birdwatcher.core.findings import Finding, Fix, Severity
@@ -88,15 +90,50 @@ class FakeModel:
 # questions_for
 
 
-def test_one_question_per_word_ignoring_case(tmp_path):
-    write(tmp_path, "docs/a.md", "The Sonet model.\nAnother sonet here.\n")
-    findings = [
-        spelling("Sonet", "docs/a.md", 1),
-        spelling("sonet", "docs/a.md", 2),
-    ]
+def test_one_question_per_word_in_each_different_line(tmp_path):
+    write(tmp_path, "docs/a.md", "The Sonet model.\nA sonet of love.\n")
+    findings = [spelling("Sonet", "docs/a.md", 1), spelling("sonet", "docs/a.md", 2)]
     assert questions_for(tmp_path, findings) == [
-        Question("Sonet", "docs/a.md", "The Sonet model.")
+        Question("Sonet", "docs/a.md", "The Sonet model."),
+        Question("sonet", "docs/a.md", "A sonet of love."),
     ]
+
+
+def test_every_finding_is_its_own_question(tmp_path):
+    for name in ("a.md", "b.md"):
+        write(tmp_path, f"docs/{name}", "Intro\n  Use sckit-learn here.\n")
+    findings = [spelling("sckit", "docs/a.md", 2), spelling("sckit", "docs/b.md", 2)]
+    assert questions_for(tmp_path, findings) == [
+        Question("sckit", "docs/a.md", "Use sckit-learn here."),
+        Question("sckit", "docs/b.md", "Use sckit-learn here."),
+    ]
+
+
+# asks_ai
+
+
+def test_the_ai_is_asked_about_spelling_errors():
+    assert asks_ai(spelling("thaat"))  # several suggestions or none: no fix
+
+
+@pytest.mark.parametrize(
+    "finding",
+    [
+        Finding(
+            CHECK,
+            Severity.WARNING,
+            "docs/a.md",
+            1,
+            "'Writen' ... 'written'?",
+            Fix(1, "Writen", "Written"),
+        ),
+        Finding(CHECK, Severity.INFO, "docs/a.md", 1, "'colour' is British"),
+        Finding("headings", Severity.ERROR, "docs/a.md", 1, "'Sonet' heading"),
+    ],
+    ids=["warning", "info", "another-check"],
+)
+def test_the_ai_is_not_asked_about_anything_else(finding):
+    assert not asks_ai(finding)
 
 
 def test_other_checks_and_findings_without_a_line_are_left_out(tmp_path):
@@ -129,10 +166,10 @@ def test_nothing_to_ask_costs_nothing():
     assert estimate([]) == Estimate(0, 0, 0)
 
 
-def test_the_estimate_counts_words_and_requests():
+def test_the_estimate_counts_questions_and_requests():
     questions = [question(f"word{i}") for i in range(WORDS_PER_REQUEST + 1)]
     cost = estimate(questions)
-    assert (cost.words, cost.requests) == (WORDS_PER_REQUEST + 1, 2)
+    assert (cost.questions, cost.requests) == (WORDS_PER_REQUEST + 1, 2)
     assert cost.tokens > estimate(questions[:1]).tokens > 0
 
 
@@ -149,16 +186,49 @@ def test_the_rules_are_the_same_and_the_words_change():
     assert "sckit" not in second[1]["content"]
 
 
+def test_the_questions_are_numbered():
+    asked = [question("recognised", "card_not_recognised"), question("recognised")]
+    content = messages_for(asked)[1]["content"]
+    assert content.index("1.") < content.index("card_not_recognised")
+    assert content.index("card_not_recognised") < content.index("2.")
+
+
 # read_verdicts
 
 
-def test_verdicts_are_read_by_lowercased_word():
-    asked = [question("Sonet"), question("subwords")]
+def test_verdicts_are_read_by_word_and_line():
+    asked = [question("Sonet", "Ask Claude Sonet."), question("subwords")]
     text = answer(typo("Sonet", "Sonnet", "the Claude model"), keep("subwords"))
     assert read_verdicts(text, asked, MODEL) == {
-        "sonet": Verdict("sonet", TYPO, "Sonnet", "the Claude model", MODEL),
-        "subwords": Verdict("subwords", KEEP, None, "a course term", MODEL),
+        ("sonet", "Ask Claude Sonet."): Verdict(
+            "sonet", "Ask Claude Sonet.", TYPO, "Sonnet", "the Claude model", MODEL
+        ),
+        asked[1].key: Verdict(
+            "subwords", asked[1].context, KEEP, None, "a course term", MODEL
+        ),
     }
+
+
+def test_a_repeated_word_is_matched_by_its_number():
+    asked = [question("recognised", "card_not_recognised"), question("recognised")]
+    text = answer(
+        {**typo("recognised", "recognized"), "id": 2},
+        {**keep("recognised", "a dataset label"), "id": "1"},
+    )
+    verdicts = read_verdicts(text, asked, MODEL)
+    assert verdicts[asked[0].key].kind == KEEP
+    assert verdicts[asked[1].key].correction == "recognized"
+
+
+def test_a_number_naming_another_word_is_dropped():
+    asked = [question("sckit"), question("runing")]
+    text = answer({**typo("sckit", "scikit"), "id": 2})
+    assert read_verdicts(text, asked, MODEL) == {}
+
+
+def test_a_repeated_word_without_a_number_is_dropped():
+    asked = [question("recognised", "card_not_recognised"), question("recognised")]
+    assert read_verdicts(answer(keep("recognised")), asked, MODEL) == {}
 
 
 @pytest.mark.parametrize(
@@ -172,9 +242,8 @@ def test_verdicts_are_read_by_lowercased_word():
 )
 def test_verdicts_are_found_in_common_wrappings(wrap):
     text = wrap(answer(typo("sckit", "scikit")))
-    assert read_verdicts(text, [question("sckit")], MODEL)["sckit"].correction == (
-        "scikit"
-    )
+    verdicts = read_verdicts(text, [question("sckit")], MODEL)
+    assert verdicts[question("sckit").key].correction == "scikit"
 
 
 def test_unusable_entries_are_dropped():
@@ -190,7 +259,7 @@ def test_unusable_entries_are_dropped():
 
 def test_a_keep_verdict_has_no_correction():
     text = answer({**keep("Papert"), "correction": "Papert"})
-    verdict = read_verdicts(text, [question("Papert")], MODEL)["papert"]
+    verdict = read_verdicts(text, [question("Papert")], MODEL)[question("Papert").key]
     assert verdict.correction is None
 
 
@@ -223,7 +292,7 @@ def test_words_are_asked_in_batches_and_tokens_add_up():
 def test_words_the_model_skipped_are_unanswered():
     model = FakeModel(reply(answer(keep("subwords"))))
     result = triage([question("subwords"), question("Sonet")], model)
-    assert list(result.verdicts) == ["subwords"]
+    assert list(result.verdicts) == [question("subwords").key]
     assert result.unanswered == ["sonet"]
 
 
@@ -234,7 +303,7 @@ def test_an_unreadable_answer_is_sent_back_once():
     retry = model.conversations[1]
     assert retry[-2] == {"role": "assistant", "content": "Sure! sckit is a typo."}
     assert retry[-1]["role"] == "user"
-    assert list(result.verdicts) == ["sckit"]
+    assert list(result.verdicts) == [question("sckit").key]
 
 
 def test_a_second_unreadable_answer_leaves_its_words_unanswered():
@@ -288,6 +357,29 @@ def test_a_request_failing_twice_is_skipped_and_asking_carries_on():
     assert result.error is None
 
 
+def test_each_request_is_announced_before_it_is_sent():
+    questions = [question(f"wordy{i}") for i in range(WORDS_PER_REQUEST + 1)]
+    announced = []
+    model = FakeModel(reply(answer()), reply(answer()))
+
+    def on_request(number, total):
+        announced.append((number, total, len(model.conversations)))
+
+    triage(questions, model, on_request=on_request)
+    assert announced == [(1, 2, 0), (2, 2, 1)]  # each before its request
+
+
+def test_stopping_sends_no_further_request():
+    questions = [question(f"wordy{i}") for i in range(WORDS_PER_REQUEST + 1)]
+    first = answer(*(keep(q.word) for q in questions[:WORDS_PER_REQUEST]))
+    model = FakeModel(reply(first))
+    result = triage(questions, model, should_stop=lambda: len(model.conversations) == 1)
+    assert len(model.conversations) == 1
+    assert len(result.verdicts) == WORDS_PER_REQUEST
+    assert result.unanswered == [questions[-1].word.lower()]
+    assert result.stopped and result.error is None
+
+
 def test_nothing_to_ask_sends_nothing():
     model = FakeModel()
     result = triage([], model)
@@ -298,8 +390,8 @@ def test_nothing_to_ask_sends_nothing():
 # ai_fix
 
 
-def verdict(word, kind=TYPO, correction=None):
-    return Verdict(word.lower(), kind, correction, "reason", MODEL)
+def verdict(word, kind=TYPO, correction=None, context="any line"):
+    return Verdict(word.lower(), context, kind, correction, "reason", MODEL)
 
 
 def test_a_typo_in_prose_gets_a_fix(tmp_path):
@@ -355,18 +447,67 @@ def test_no_fix_for_another_check_or_a_gone_line(tmp_path):
     assert ai_fix(tmp_path, gone, sonnet) is None
 
 
+# verdict_for
+
+
+def test_a_finding_gets_the_verdict_on_its_word_in_its_line(tmp_path):
+    write(tmp_path, "docs/a.md", "The Sonet model.\nA sonet of love.\n")
+    model_line = Verdict("sonet", "The Sonet model.", TYPO, "Sonnet", "AI", MODEL)
+    poem_line = Verdict("sonet", "A sonet of love.", TYPO, "sonnet", "poem", MODEL)
+    verdicts = {model_line.key: model_line, poem_line.key: poem_line}
+    assert verdict_for(tmp_path, spelling("Sonet", "docs/a.md", 1), verdicts) == (
+        model_line
+    )
+    assert verdict_for(tmp_path, spelling("sonet", "docs/a.md", 2), verdicts) == (
+        poem_line
+    )
+
+
+def test_an_edited_line_has_no_verdict(tmp_path):
+    write(tmp_path, "docs/a.md", "The Sonet model, now edited.\n")
+    old = Verdict("sonet", "The Sonet model.", TYPO, "Sonnet", "AI", MODEL)
+    finding = spelling("Sonet", "docs/a.md", 1)
+    assert verdict_for(tmp_path, finding, {old.key: old}) is None
+
+
+def test_other_checks_have_no_verdict(tmp_path):
+    write(tmp_path, "docs/a.md", "The Sonet model.\n")
+    old = Verdict("sonet", "The Sonet model.", TYPO, "Sonnet", "AI", MODEL)
+    other = Finding("headings", Severity.ERROR, "docs/a.md", 1, "'Sonet' heading")
+    assert verdict_for(tmp_path, other, {old.key: old}) is None
+
+
 # load_verdicts and save_verdicts
 
 
 def test_verdicts_are_remembered_per_course(tmp_path):
     store = tmp_path / "verdicts.json"
     one, two = tmp_path / "one", tmp_path / "two"
-    sonet = {"sonet": Verdict("sonet", TYPO, "Sonnet", "the model", MODEL)}
-    subwords = {"subwords": Verdict("subwords", KEEP, None, "a term", MODEL)}
-    save_verdicts(store, one, sonet)
-    save_verdicts(store, two, subwords)
-    assert load_verdicts(store, one) == sonet
-    assert load_verdicts(store, two) == subwords
+    sonet = Verdict("sonet", "The Sonet model.", TYPO, "Sonnet", "the model", MODEL)
+    subwords = Verdict("subwords", "Use subwords.", KEEP, None, "a term", MODEL)
+    save_verdicts(store, one, {sonet.key: sonet})
+    save_verdicts(store, two, {subwords.key: subwords})
+    assert load_verdicts(store, one) == {sonet.key: sonet}
+    assert load_verdicts(store, two) == {subwords.key: subwords}
+
+
+def test_verdicts_saved_without_their_line_are_left_out(tmp_path):
+    store = tmp_path / "verdicts.json"
+    sonet = Verdict("sonet", "The Sonet model.", TYPO, "Sonnet", "the model", MODEL)
+    save_verdicts(store, tmp_path, {sonet.key: sonet})
+    data = json.loads(store.read_text(encoding="utf-8"))
+    for entries in data.values():
+        entries.append(
+            {
+                "word": "runing",
+                "kind": "typo",
+                "correction": "running",
+                "reason": "",
+                "model": MODEL,
+            }
+        )  # the old, per-word form
+    store.write_text(json.dumps(data), encoding="utf-8")
+    assert load_verdicts(store, tmp_path) == {sonet.key: sonet}
 
 
 def test_nothing_remembered_is_empty(tmp_path):

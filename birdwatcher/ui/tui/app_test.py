@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import sys
+import threading
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -27,6 +28,7 @@ from textual.widgets import (
     Static,
 )
 
+from birdwatcher.checks.spelling_triage import WORDS_PER_REQUEST
 from birdwatcher.core.ai import AiError, Reply, memory_key_store
 from birdwatcher.core.check import Check
 from birdwatcher.core.config import Config, load_config, save_config
@@ -2485,14 +2487,23 @@ def test_fixed_findings_cannot_be_ignored(tmp_path):
 
 # Asking the AI (m)
 
-SPELLING_PAGE = "Spelling\nWe use sckit here.\nAsk Claude Sonet.\nRun `numpi` now.\n"
+SPELLING_PAGE = (
+    "Spelling\nWe use sckit here.\nAsk Claude Sonet.\nRun `numpi` now.\nWriten by me.\n"
+)
 SCKIT = Finding(
+    "spelling",
+    Severity.ERROR,
+    "docs/S.md",
+    2,
+    "'sckit' is not in the dictionary. Did you mean one of: skit, scat?",
+)
+WRITEN = Finding(  # a warning: the dictionary has the fix, so no AI
     "spelling",
     Severity.WARNING,
     "docs/S.md",
-    2,
-    "'sckit' is not in the dictionary. Did you mean 'skit'?",
-    Fix(2, "sckit", "skit"),
+    5,
+    "'Writen' is not in the dictionary. Did you mean 'Written'?",
+    Fix(5, "Writen", "Written"),
 )
 SONET = Finding(
     "spelling",
@@ -2508,11 +2519,15 @@ API_KEY = "sk-or-v1-test-key"
 AI_MODEL = "test/model-1"
 
 
+QUESTION_ITEM = re.compile(r'^(\d+)\. "([^"]+)" in \S+: (.*)$', re.MULTILINE)
+
+
 class FakeChat:
-    """Stands in for core.ai.chat: answers every conversation with verdicts
-    on `words` ({word: correction, or None to keep}; words not asked about
-    are dropped by the app) and records each (connection, messages). The
-    exceptions in `failures` are raised first, one per call."""
+    """Stands in for core.ai.chat: answers each numbered question it is sent
+    whose word is in `words` ({word or (word, line): correction, or None to
+    keep}; a (word, line) entry rules on that line only), by number, and
+    records each (connection, messages). The exceptions in `failures` are
+    raised first, one per call."""
 
     def __init__(self, words, failures=()):
         self.words = words
@@ -2523,15 +2538,21 @@ class FakeChat:
         self.calls.append((connection, messages))
         if self.failures:
             raise self.failures.pop(0)
-        verdicts = [
-            {
-                "word": word,
-                "verdict": "keep" if correction is None else "typo",
-                "correction": correction,
-                "reason": f"the reason for {word}",
-            }
-            for word, correction in self.words.items()
-        ]
+        verdicts = []
+        for number, word, line in QUESTION_ITEM.findall(messages[-1]["content"]):
+            for key in ((word, line), word):
+                if key in self.words:
+                    correction = self.words[key]
+                    verdicts.append(
+                        {
+                            "id": int(number),
+                            "word": word,
+                            "verdict": "keep" if correction is None else "typo",
+                            "correction": correction,
+                            "reason": f"the reason for {word}",
+                        }
+                    )
+                    break
         return Reply(json.dumps({"verdicts": verdicts}), AI_MODEL, 120, 30, 0.5)
 
     def questions(self):
@@ -2603,16 +2624,33 @@ def test_m_asks_about_the_word_and_its_verdict_becomes_the_fix(tmp_path, how):
     drive(app, steps)
 
 
-def test_a_word_to_keep_drops_the_dictionarys_guess(tmp_path):
+def test_a_word_to_keep_offers_the_dictionary(tmp_path):
     app, _ = ai_app(tmp_path, FakeChat({"sckit": None}))
 
     async def steps(app, pilot):
-        assert is_visible(app, "#fix")  # the dictionary's 'skit'
         await press(app, pilot, "m")
         assert "keep" in panel_text(app).lower()
         assert not is_visible(app, "#fix")
-        assert "f" not in footer_keys(app)
-        assert "a" in footer_keys(app)  # adding it to the dictionary remains
+        assert "a" in footer_keys(app)  # adding it to the dictionary
+
+    drive(app, steps)
+
+
+def test_findings_the_dictionary_can_fix_are_never_asked_about(tmp_path):
+    chat = FakeChat({"Sonet": "Sonnet", "Writen": "Written"})
+    app, _ = ai_app(tmp_path, chat, findings=(SONET, WRITEN))
+
+    async def steps(app, pilot):
+        await press(app, pilot, "n")  # the warning, with the dictionary's fix
+        assert "m" not in footer_keys(app)
+        assert not is_visible(app, "#ask-ai")
+        await press(app, pilot, "m")
+        assert chat.calls == []
+        await on_check_branch(app, pilot)
+        assert "ASK AI ABOUT 1 ERROR" in str(app.screen.query_one("#ask-ai").label)
+        await press(app, pilot, "m", "enter")
+        [question] = chat.questions()
+        assert "Sonet" in question and "Writen" not in question
 
     drive(app, steps)
 
@@ -2683,8 +2721,9 @@ def test_m_on_a_branch_shows_the_cost_first_and_cancel_sends_nothing(tmp_path):
         text = " ".join(
             render_text(app.screen.query_one("#ask-ai-text", Static).content).split()
         )
-        assert "2 words" in text and "1 request" in text
+        assert "2 errors" in text and "1 request" in text
         assert "openrouter/free" in text and "tokens" in text
+        assert "differ" in text  # the free router's warning
         await press(app, pilot, "escape")
         assert not isinstance(app.screen, AskAiDialog)
         assert chat.calls == []
@@ -2735,6 +2774,45 @@ def test_after_asking_on_a_branch_each_finding_shows_its_own_verdict(tmp_path):
     drive(app, steps)
 
 
+def test_the_same_word_in_different_lines_gets_its_own_verdict(tmp_path):
+    course = make_course(tmp_path / "course")
+    page = "Spelling\nAsk Claude Sonet 4.\nA Sonet of love.\nAsk Claude Sonet 4.\n"
+    (course / "docs" / "S.md").write_text(page, encoding="utf-8")
+    message = "'Sonet' is not in the dictionary."
+    findings = [
+        Finding("spelling", Severity.ERROR, "docs/S.md", n, message) for n in (2, 3, 4)
+    ]
+    chat = FakeChat(
+        {
+            ("Sonet", "Ask Claude Sonet 4."): "Sonnet",
+            ("Sonet", "A Sonet of love."): "sonnet",
+        }
+    )
+    app, _ = make_app(
+        tmp_path,
+        FakeChecker(findings),
+        course,
+        keys={"openrouter": API_KEY},
+        send_chat=chat,
+    )
+
+    async def steps(app, pilot):
+        await on_check_branch(app, pilot)
+        await press(app, pilot, "m")
+        text = " ".join(
+            render_text(app.screen.query_one("#ask-ai-text", Static).content).split()
+        )
+        assert "3 errors" in text  # exactly the errors, line 4's repeat too
+        await press(app, pilot, "enter")
+        assert len(chat.calls) == 1
+        assert chat.questions()[0].count('"Sonet"') == 3
+        for expected in ("typo: 'Sonnet'", "typo: 'sonnet'", "typo: 'Sonnet'"):
+            await press(app, pilot, "n")
+            assert expected in panel_text(app)
+
+    drive(app, steps)
+
+
 def test_a_branch_asks_only_about_words_without_a_verdict(tmp_path):
     chat = FakeChat({"sckit": "scikit", "Sonet": "Sonnet"})
     app, _ = ai_app(tmp_path, chat)
@@ -2744,7 +2822,7 @@ def test_a_branch_asks_only_about_words_without_a_verdict(tmp_path):
         await on_check_branch(app, pilot)
         await press(app, pilot, "m")
         text = render_text(app.screen.query_one("#ask-ai-text", Static).content)
-        assert "1 word" in " ".join(text.split())
+        assert "1 error" in " ".join(text.split())
         await press(app, pilot, "enter")
         assert "Sonet" in chat.questions()[1]
         assert "sckit" not in chat.questions()[1]
@@ -2782,6 +2860,112 @@ def test_verdicts_are_remembered_across_launches(tmp_path):
         assert "scikit" in panel_text(app)  # no request: the fake chat fails tests
 
     drive(again, second)
+
+
+class GatedChat(FakeChat):
+    """A FakeChat that holds each answer until the test opens the gate, so
+    the app can be looked at while it waits."""
+
+    def __init__(self, words, failures=()):
+        super().__init__(words, failures)
+        self.gate = threading.Event()
+
+    def __call__(self, connection, messages):
+        assert self.gate.wait(10), "the test never opened the gate"
+        return super().__call__(connection, messages)
+
+
+async def wait_for(pilot, condition):
+    """Let the app run until condition() is true (at most 5 seconds)."""
+    for _ in range(250):
+        if condition():
+            return
+        await pilot.pause(0.02)
+    raise AssertionError("the app never got there")
+
+
+def strip_status(app):
+    return " ".join(
+        render_text(app.screen.query_one("#watch-status", Static).content).split()
+    )
+
+
+def many_words_app(tmp_path, chat, count):
+    """An app on a page with `count` distinct misspelled words, one a line."""
+    words = [f"quux{chr(97 + i // 26)}{chr(97 + i % 26)}" for i in range(count)]
+    course = make_course(tmp_path / "course")
+    page = "\n".join(f"Say {word} here." for word in words) + "\n"
+    (course / "docs" / "S.md").write_text(page, encoding="utf-8")
+    findings = [
+        Finding("spelling", Severity.ERROR, "docs/S.md", n + 1, f"'{w}' is not ok.")
+        for n, w in enumerate(words)
+    ]
+    chat.words = dict.fromkeys(words)  # every word: keep
+    app, _ = make_app(
+        tmp_path,
+        FakeChecker(findings),
+        course,
+        keys={"openrouter": API_KEY},
+        send_chat=chat,
+    )
+    return app
+
+
+def test_while_asking_the_strip_says_so(tmp_path):
+    chat = GatedChat({"sckit": "scikit", "Sonet": "Sonnet"})
+    app, _ = ai_app(tmp_path, chat)
+
+    async def steps(app, pilot):
+        await on_check_branch(app, pilot)
+        await pilot.press("m", "enter")
+        await wait_for(pilot, lambda: "ASKING" in strip_status(app))
+        assert "openrouter/free" in strip_status(app)
+        assert "0/1" in strip_status(app) and "request 1 of 1" in strip_status(app)
+        assert is_visible(app, "#stop")
+        assert not app.screen.check_action("ask_ai", ())  # one ask at a time
+        chat.gate.set()
+        await settle(app, pilot)
+        assert not is_visible(app, "#watch")
+
+    drive(app, steps)
+
+
+def test_stopping_while_asking_sends_no_further_request(tmp_path):
+    chat = GatedChat({})
+    app = many_words_app(tmp_path, chat, WORDS_PER_REQUEST + 1)
+
+    async def steps(app, pilot):
+        await on_check_branch(app, pilot)
+        await pilot.press("m", "enter")
+        await wait_for(pilot, lambda: "request 1 of 2" in strip_status(app))
+        await pilot.press("x")
+        await wait_for(pilot, lambda: "STOPPING" in strip_status(app))
+        chat.gate.set()
+        await settle(app, pilot)
+        assert len(chat.calls) == 1
+        text = " ".join(panel_text(app).split())
+        assert "stopped" in text.lower() and "press m" in text.lower()
+
+    drive(app, steps)
+
+
+def test_the_branch_keeps_the_outcome_of_asking(tmp_path):
+    failure = AiError("OpenRouter limited the rate of requests.")
+    chat = FakeChat({"sckit": "scikit"}, failures=[failure])
+    app, _ = ai_app(tmp_path, chat)
+
+    async def steps(app, pilot):
+        await on_check_branch(app, pilot)
+        await press(app, pilot, "m", "enter")
+        text = " ".join(panel_text(app).split())
+        assert "limited the rate" in text
+        assert "press m" in text.lower()
+        await press(app, pilot, "m", "enter")  # asked again: sckit gets a verdict
+        text = " ".join(panel_text(app).split())
+        assert "1 of 2 errors" in text  # Sonet was not answered by this fake
+        assert "limited the rate" not in text  # the newest outcome only
+
+    drive(app, steps)
 
 
 def test_m_does_not_apply_to_other_findings(tmp_path):

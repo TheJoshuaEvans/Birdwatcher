@@ -1,7 +1,7 @@
 """
 The watch strip: a status strip at the bottom of the findings pane that says
-what Birdwatcher is checking while checks run, and which checks were not
-re-checked after a run was stopped.
+what Birdwatcher is checking while checks run (or asking, while the AI model
+is asked), and which checks were not re-checked after a run was stopped.
 
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
@@ -68,6 +68,29 @@ class WatchStrip(Horizontal):
         status.append(f"\n{title}")
         if detail:
             status.append(f" · {detail}", style="dim")
+        self._show(status, stop=True)
+
+    def show_asking(self, model, done, total, seconds):
+        """
+        Show that the AI model is being asked, with the STOP button.
+
+        Args:
+            model (str): The model asked.
+            done (int): Requests answered so far.
+            total (int): Requests in all.
+            seconds (float): Time since asking began.
+
+        The first line reads "ASKING", the bar, "done/total" and the time as
+        m:ss; the second line names the model and the request being waited
+        for ("request 2 of 3").
+        """
+        minutes, rest = divmod(int(seconds), 60)
+        status = Text("ASKING", style="bold")
+        status.append(
+            f"  {progress_bar(done, total)}  {done}/{total}  {minutes}:{rest:02d}"
+        )
+        status.append(f"\n{model}")
+        status.append(f" · request {min(done + 1, total)} of {total}", style="dim")
         self._show(status, stop=True)
 
     def show_stopping(self):

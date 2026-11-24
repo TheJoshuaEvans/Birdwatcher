@@ -28,6 +28,7 @@ OPENROUTER, GEMINI, OPENAI, LOCAL, CUSTOM = (
     "custom",
 )  # provider ids
 DEFAULT_PROVIDER = OPENROUTER
+FREE_ROUTER = "openrouter/free"  # routes each request to any free model
 TIMEOUT = 120  # seconds to wait for an answer (thinking models can be slow)
 SAVED_SOURCE = "saved in Birdwatcher"
 TOKENS_PER_PRICE = 1_000_000  # prices are shown per million tokens
@@ -72,7 +73,7 @@ PROVIDERS: Mapping[str, Provider] = {
         "https://openrouter.ai/api/v1",
         "OPENROUTER_API_KEY",
         True,
-        "openrouter/free",  # a router to whichever free model is available
+        FREE_ROUTER,
     ),
     GEMINI: Provider(
         GEMINI,
@@ -245,6 +246,29 @@ class AiError(Exception):
     def __init__(self, message, retry_may_help=False):
         super().__init__(message)
         self.retry_may_help = retry_may_help
+
+
+def model_warning(provider_id, model):
+    """
+    A caution to show beside a chosen model, when it needs one.
+
+    Args:
+        provider_id (str): The chosen provider's id.
+        model (str): The chosen model (surrounding spaces are ignored).
+
+    Returns:
+        str | None: For OpenRouter's free router (openrouter/free), that
+            each request goes to whichever free model is available, so
+            answers can differ between requests and runs; otherwise None.
+    """
+    if provider_id == OPENROUTER and model.strip() == FREE_ROUTER:
+        return (
+            f"{FREE_ROUTER} sends each request to whichever free model is "
+            "available, often a small one, so answers can differ between "
+            "requests and between runs. Choose a model with PICK… for steadier "
+            "results."
+        )
+    return None
 
 
 def find_key(provider, saved, environ):

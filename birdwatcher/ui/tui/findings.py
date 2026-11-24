@@ -8,6 +8,7 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 import itertools
 import logging
 import threading
+import time
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import ClassVar
@@ -36,14 +37,17 @@ from textual.widgets import (
 from birdwatcher.checks.spelling import word_of
 from birdwatcher.checks.spelling_triage import (
     KEEP,
+    WORDS_PER_REQUEST,
     ai_fix,
+    asks_ai,
     estimate,
     load_verdicts,
     questions_for,
     save_verdicts,
     triage,
+    verdict_key,
 )
-from birdwatcher.core.ai import AiError
+from birdwatcher.core.ai import AiError, model_warning
 from birdwatcher.core.config import DEFAULT_SPLIT, SPLIT_RANGE
 from birdwatcher.core.dictionary import DictionaryError, add_words
 from birdwatcher.core.findings import Severity
@@ -123,16 +127,27 @@ class FindingsScreen(Screen):
         verdict_path (Path | None): Where the AI's spelling verdicts are
             remembered per course folder; None remembers none.
 
-    Asking the AI (m): only on the user's request is a model ever asked. On
-    an open spelling finding, m asks about its word at once (asking again
-    when it already has a verdict); on a branch, m first shows the cost
-    (spelling_triage.estimate, in an AskAiDialog) of asking about the
-    branch's words that have no verdict yet. Verdicts are remembered per
-    course folder; a finding whose word has one shows it (typo or keep, the
-    reason, the model) and its fix becomes spelling_triage.ai_fix's (none
-    for a word to keep), so f, FIX ALL, undo and the fix log treat it like
-    any fix. A missing setup or a failed request is reported in a
+    Asking the AI (m): only on the user's request is a model ever asked, and
+    only about spelling errors (spelling_triage.asks_ai: warnings and info
+    have the dictionary's fix). On an open spelling error, m asks about its
+    word in its line at once (asking again when it already has a verdict);
+    on a branch, m first shows the cost (spelling_triage.estimate, in an
+    AskAiDialog) of asking about exactly the branch's open spelling errors
+    that have no verdict yet. Verdicts are remembered per course folder, by
+    word and line (spelling_triage.verdict_for); a finding with one shows it
+    (typo or keep, the reason, the model) and its fix becomes
+    spelling_triage.ai_fix's (none for a word to keep), so f, FIX ALL, undo
+    and the fix log treat it like any fix. A missing setup or a failed request is reported in a
     notification, with the tokens used when there were any.
+
+    While the model is asked, the watch strip shows it (WatchStrip.show_asking:
+    the request being waited for and a running clock, updated every second)
+    and m is unavailable; x (or STOP) stops asking after the request already
+    sent, showing STOPPING meanwhile. A check run started meanwhile does not
+    take over the strip. When asking about a branch ends, its detail keeps
+    the outcome until the next ask: verdicts on N of M words, the tokens,
+    any request skipped and why, a stop or failure, and when words are left
+    without a verdict, that m asks about them.
     """
 
     # The footer shows only what applies to the selection (check_action hides
@@ -189,7 +204,8 @@ class FindingsScreen(Screen):
         self._ai_connection = ai_connection
         self._send_chat = send_chat
         self._verdict_path = verdict_path
-        self._verdicts = {}  # the AI's spelling verdicts, by lowercased word
+        self._verdicts = {}  # the AI's spelling verdicts, by (word, line) key
+        self._verdict_keys = {}  # finding id -> its verdict key, until a re-check
         self._ai_fixes = {}  # (finding, verdict) -> its AI fix, until a re-check
         self._asking = False  # a request to the model is under way
         self._shown_severities = frozenset(shown_severities)
@@ -216,6 +232,10 @@ class FindingsScreen(Screen):
         # A Row.key or BranchKey the next redraw puts the cursor on
         self._next_cursor = None
         self._batch_report = None  # (BranchKey, Text): the last fix-all's outcome
+        self._ask_report = None  # (BranchKey, Text): the last branch ask's outcome
+        self._ask_stop = threading.Event()  # set by x while the model is asked
+        self._ask_progress = None  # (model, requests done, total, started) while asking
+        self._ask_clock = None  # the timer that redraws the strip while asking
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -331,7 +351,7 @@ class FindingsScreen(Screen):
         # A new generation makes any run still going stop at its next progress
         # report, and drops whatever it sends from then on.
         self._generation += 1
-        self._ai_fixes = {}  # files may have changed
+        self._ai_fixes, self._verdict_keys = {}, {}  # files may have changed
         self._stop_asked = threading.Event()
         self._running = True
         self._running_title = None
@@ -378,17 +398,19 @@ class FindingsScreen(Screen):
         if generation != self._generation:
             return
         strip = self.query_one(WatchStrip)
+        # While the model is asked, the strip is the ask's (see the class docs).
+        shows = not self._stop_asked.is_set() and not self._asking
         if isinstance(event, CheckStarted):
             self._running_title = event.check.title
         elif isinstance(event, CheckProgress):
-            if not self._stop_asked.is_set():
+            if shows:
                 strip.show_running(
                     event.check.title, event.done, event.total, event.detail
                 )
         elif isinstance(event, CheckFinished):
             self._running_title = None
             self._merge(event.result)
-            if not self._stop_asked.is_set():
+            if shows:
                 strip.hide()
             self._show_rows()
 
@@ -431,11 +453,13 @@ class FindingsScreen(Screen):
             ]
             if self._running_title and self._running_title not in titles:
                 titles.append(self._running_title)
-            strip.show_stopped(titles)
+            if not self._asking:
+                strip.show_stopped(titles)
         else:
             self._run = run
             self._stale = set()
-            strip.hide()
+            if not self._asking:
+                strip.hide()
         self._running_title = None
         self.refresh_bindings()
         self._show_rows()
@@ -632,7 +656,9 @@ class FindingsScreen(Screen):
         spelled = row.is_open and word_of(finding) is not None
         verdict = self._verdict_for(finding) if spelled else None
         buttons["add-word"].display = spelled
-        buttons["ask-ai"].display = spelled and self._ai_connection is not None
+        buttons["ask-ai"].display = (
+            row.is_open and asks_ai(finding) and self._ai_connection is not None
+        )
         buttons["ask-ai"].label = Content(
             "[M] ASK AI AGAIN" if verdict else "[M] ASK AI"
         )
@@ -754,7 +780,8 @@ class FindingsScreen(Screen):
         if action == "unzoom":
             return self._zoomed
         if action == "stop":
-            return self._running and not self._stop_asked.is_set()
+            asking = self._asking and not self._ask_stop.is_set()
+            return asking or (self._running and not self._stop_asked.is_set())
         if action == "open_editor":
             return row is not None
         if action == "add_word":
@@ -764,14 +791,19 @@ class FindingsScreen(Screen):
                 return False
             if row is None:
                 return bool(self._unasked_in_branch())
-            return row.is_open and word_of(row.finding) is not None
+            return row.is_open and asks_ai(row.finding)
         return True
 
     # Asking the AI
 
     def _verdict_for(self, finding):
-        word = word_of(finding)
-        return None if word is None else self._verdicts.get(word.lower())
+        """The verdict on a finding's word in its line (keys kept until the
+        next check, since finding one reads the file)."""
+        if not self._verdicts or word_of(finding) is None:
+            return None
+        if finding.id not in self._verdict_keys:
+            self._verdict_keys[finding.id] = verdict_key(self.course_dir, finding)
+        return self._verdicts.get(self._verdict_keys[finding.id])
 
     def _with_ai_fix(self, finding):
         """The finding with the fix its word's verdict decides (in place of
@@ -795,7 +827,7 @@ class FindingsScreen(Screen):
             row.finding
             for row in FindingsTree.rows_under(node)
             if row.is_open
-            and word_of(row.finding) is not None
+            and asks_ai(row.finding)
             and self._verdict_for(row.finding) is None
         ]
 
@@ -811,58 +843,105 @@ class FindingsScreen(Screen):
             return
         row = self._current()
         if row is not None:
-            self._ask(connection, questions_for(self.course_dir, [row.finding]))
+            self._ask(connection, [row.finding])
             return
         branch = self.query_one(FindingsTree).current_branch()
-        questions = questions_for(self.course_dir, self._unasked_in_branch())
+        findings = self._unasked_in_branch()
 
         def answered(confirmed):
             if confirmed:
-                self._ask(connection, questions)
+                self._ask(connection, findings, branch.data)
 
-        cost = estimate(questions)
-        dialog = AskAiDialog(branch.data.labels[-1], cost, connection.model)
+        cost = estimate(questions_for(self.course_dir, findings))
+        warning = model_warning(connection.provider.id, connection.model)
+        dialog = AskAiDialog(
+            branch.data.labels[-1], len(findings), cost, connection.model, warning
+        )
         self.app.push_screen(dialog, answered)
 
-    def _ask(self, connection, questions):
+    def _ask(self, connection, findings, branch_key=None):
+        """Ask about some findings' words in the background; a branch_key
+        (the branch asked about) keeps the outcome in that branch's detail."""
+        questions = questions_for(self.course_dir, findings)
         if not questions:
             return
         self._asking = True
+        self._ask_stop = threading.Event()
+        requests = -(-len(questions) // WORDS_PER_REQUEST)  # rounded up
+        self._ask_progress = (connection.model, 0, requests, time.monotonic())
+        self._show_asking()
+        self._ask_clock = self.set_interval(1, self._show_asking)
         self.refresh_bindings()
-        words = "1 word" if len(questions) == 1 else f"{len(questions):,} words"
+        count = "1 error" if len(findings) == 1 else f"{len(findings):,} errors"
         _log.info(
-            "asking %s about %s: %s",
+            "asking %s about %s (%d questions): %s",
             connection.model,
-            words,
+            count,
+            len(questions),
             ", ".join(question.word for question in questions),
         )
-        self.notify(f"Asking {connection.model} about {words}…")
-        self._ask_in_background(self.course_dir, connection, questions)
+        self.notify(f"Asking {connection.model} about {count}…")
+        self._ask_in_background(
+            self.course_dir, connection, questions, findings, branch_key, self._ask_stop
+        )
+
+    def _show_asking(self):
+        """Redraw the strip while asking (each second, and per request)."""
+        if self._ask_progress is None or self._ask_stop.is_set():
+            return
+        model, done, total, started = self._ask_progress
+        strip = self.query_one(WatchStrip)
+        strip.show_asking(model, done, total, time.monotonic() - started)
+
+    def _request_sent(self, number, total):
+        if self._ask_progress is not None:
+            model, _, _, started = self._ask_progress
+            self._ask_progress = (model, number - 1, total, started)
+            self._show_asking()
 
     @work(thread=True)
-    def _ask_in_background(self, course_dir, connection, questions):
+    def _ask_in_background(
+        self, course_dir, connection, questions, findings, branch_key, stop
+    ):
         # A thread worker that raises would close the app (see _check_in_background).
         def ask(messages):
             return self._send_chat(connection, messages)
 
+        def on_request(number, total):
+            self.app.call_from_thread(self._request_sent, number, total)
+
         try:
-            result = triage(questions, ask)
+            result = triage(questions, ask, on_request, stop.is_set)
         except Exception as error:  # noqa: BLE001
             self.app.call_from_thread(self._asked_failed, course_dir, error)
         else:
-            self.app.call_from_thread(self._asked, course_dir, len(questions), result)
+            self.app.call_from_thread(
+                self._asked, course_dir, findings, result, branch_key
+            )
+
+    def _done_asking(self):
+        """Back from asking: the clock stops, the strip goes (unless a check
+        is running, whose next report shows it), m is available again."""
+        seconds = 0.0
+        if self._ask_progress is not None:
+            seconds = time.monotonic() - self._ask_progress[3]
+        if self._ask_clock is not None:
+            self._ask_clock.stop()
+        self._asking, self._ask_progress, self._ask_clock = False, None, None
+        if not self._running:
+            self.query_one(WatchStrip).hide()
+        self.refresh_bindings()
+        return seconds
 
     def _asked_failed(self, course_dir, error):
         _log.error("asking the AI failed", exc_info=error)
-        self._asking = False
-        self.refresh_bindings()
+        self._done_asking()
         self.notify(f"Could not ask the AI: {error}", severity="error")
 
-    def _asked(self, course_dir, asked, result):
-        """Keep a triage's verdicts and report it (dropped when the course
-        changed meanwhile)."""
-        self._asking = False
-        self.refresh_bindings()
+    def _asked(self, course_dir, findings, result, branch_key=None):
+        """Keep a triage's verdicts and report it in findings, the unit the
+        list counts in (dropped when the course changed meanwhile)."""
+        seconds = self._done_asking()
         if course_dir != self.course_dir:
             _log.info("AI verdicts dropped: the course changed while asking")
             return
@@ -877,18 +956,21 @@ class FindingsScreen(Screen):
         self._verdicts.update(result.verdicts)
         if self._verdict_path is not None and result.verdicts:
             save_verdicts(self._verdict_path, self.course_dir, self._verdicts)
+        answered = sum(1 for f in findings if self._verdict_for(f) is not None)
         tokens = result.input_tokens + result.output_tokens
         used = f" ({tokens:,} tokens)" if tokens else ""
         if result.error:
             self.notify(f"{result.error}{used}", severity="error")
         else:
-            got = len(result.verdicts)
-            report = f"AI verdicts on {got} of {asked} words{used}."
+            report = f"AI verdicts on {answered} of {len(findings)} errors{used}."
             if result.unanswered:
                 report += f" No answer about: {', '.join(result.unanswered)}."
             self.notify(
                 report, severity="warning" if result.unanswered else "information"
             )
+        if branch_key is not None:
+            outcome = _ask_outcome(answered, len(findings), result, seconds)
+            self._ask_report = (branch_key, outcome)
         if self._run is not None:
             self._show_rows()
 
@@ -912,6 +994,12 @@ class FindingsScreen(Screen):
         )
 
     def action_stop(self):
+        if self._asking and not self._ask_stop.is_set():
+            _log.info("stop asking after the current request")
+            self._ask_stop.set()
+            self.query_one(WatchStrip).show_stopping()
+            self.refresh_bindings()
+            return
         if not self._running or self._stop_asked.is_set():
             return
         self._stop_asked.set()
@@ -1080,18 +1168,21 @@ class FindingsScreen(Screen):
             text.append(f"{len(fixable)} can be fixed, in {files} {noun}.\n")
         else:
             text.append("Nothing here can be fixed automatically.\n")
-        verdicts = {
-            verdict.word: verdict
+        verdicts = [
+            verdict
             for verdict in (self._verdict_for(row.finding) for row in rows)
             if verdict is not None
-        }.values()
+        ]
         if verdicts:
             keep = sum(1 for verdict in verdicts if verdict.kind == KEEP)
             typos = len(verdicts) - keep
             text.append(
-                f"AI verdicts: {typos} {'typo' if typos == 1 else 'typos'}, "
-                f"{keep} to keep.\n"
+                f"{len(verdicts)} have an AI verdict: "
+                f"{typos} {'typo' if typos == 1 else 'typos'}, {keep} to keep.\n"
             )
+        if self._ask_report is not None and self._ask_report[0] == node.data:
+            text.append("\n")
+            text.append_text(self._ask_report[1])
         if self._batch_report is not None and self._batch_report[0] == node.data:
             text.append("\n")
             text.append_text(self._batch_report[1])
@@ -1099,9 +1190,9 @@ class FindingsScreen(Screen):
         fix_button = self.query_one("#fix", Button)
         fix_button.label = Content(f"[F] FIX ALL {len(fixable)}")
         fix_button.display = bool(fixable)
-        unasked = {word_of(finding).lower() for finding in self._unasked_under(node)}
+        unasked = self._unasked_under(node)
         ask_button = self.query_one("#ask-ai", Button)
-        noun = "WORD" if len(unasked) == 1 else "WORDS"
+        noun = "ERROR" if len(unasked) == 1 else "ERRORS"
         ask_button.label = Content(f"[M] ASK AI ABOUT {len(unasked)} {noun}")
         ask_button.display = bool(unasked) and self._ai_connection is not None
         self.query_one("#actions").display = fix_button.display or ask_button.display
@@ -1229,6 +1320,29 @@ def _describe_fix(finding):
         ]
     )
     return f"{finding.path} ({finding.check}) {changes}"
+
+
+def _ask_outcome(answered, asked, result, seconds):
+    """A branch ask's outcome for its detail (see FindingsScreen): answered
+    of asked findings, and the triage's result."""
+    minutes, rest = divmod(int(seconds), 60)
+    tokens = result.input_tokens + result.output_tokens
+    text = Text("AI: ", style="bold")
+    text.append(
+        f"verdicts on {answered} of {asked} errors "
+        f"({tokens:,} tokens, {minutes}:{rest:02d}).\n"
+    )
+    for failure in result.failures:
+        text.append(f"Skipped {failure}\n")
+    if result.stopped:
+        text.append("Stopped before every request was sent.\n")
+    if result.error:
+        text.append(f"Asking stopped: {result.error}\n", style="bold")
+    left = asked - answered
+    if left:
+        noun = "error has" if left == 1 else "errors have"
+        text.append(f"{left} {noun} no verdict yet: press m to ask about them.\n")
+    return text
 
 
 def _verdict_text(verdict, fix):
