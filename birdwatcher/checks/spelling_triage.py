@@ -14,6 +14,7 @@ Joshua Evans, 2026-11-23 (written with Claude Opus 5.5)
 """
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 
@@ -55,6 +56,8 @@ Give exactly one verdict for every word."""
 
 RETRY = "That answer could not be used: {error} Answer again with the JSON only."
 FENCED = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -271,14 +274,24 @@ def triage(questions, ask):
 
     batches = _batches(questions)
     for number, batch in enumerate(batches):
+        where = f"request {number + 1} of {len(batches)}"
+        words = ", ".join(question.word for question in batch)
+        _log.info("%s: %d words: %s", where, len(batch), words)
         try:
-            found = _ask_batch(batch, asked)
+            found = _ask_batch(batch, asked, where)
         except AiError as failure:
+            _log.warning("%s failed, asking stops: %s", where, failure)
             error = str(failure)
             unanswered += [q.word.lower() for later in batches[number:] for q in later]
             break
         verdicts.update(found)
         unanswered += [q.word.lower() for q in batch if q.word.lower() not in found]
+    _log.info(
+        "triage done: %d verdicts, %d words unanswered%s",
+        len(verdicts),
+        len(unanswered),
+        f": {', '.join(unanswered)}" if unanswered else "",
+    )
     return TriageResult(verdicts, unanswered, tokens[0], tokens[1], error)
 
 
@@ -378,14 +391,18 @@ def _batches(questions):
     ]
 
 
-def _ask_batch(batch, ask):
+def _ask_batch(batch, ask, where):
     """Verdicts for one batch: the answer, or one retry after an unreadable
-    one (then none). AiError passes through."""
+    one (then none). AiError passes through. `where` names the request in
+    the log."""
     messages = messages_for(batch)
     reply = ask(messages)
     try:
-        return read_verdicts(reply.text, batch, reply.model)
+        return _read_logged(reply, batch, where)
     except VerdictError as error:
+        _log.warning(
+            "%s: unusable answer (%s), asking again:\n%s", where, error, reply.text
+        )
         messages = [
             *messages,
             {"role": "assistant", "content": reply.text},
@@ -393,9 +410,19 @@ def _ask_batch(batch, ask):
         ]
     reply = ask(messages)
     try:
-        return read_verdicts(reply.text, batch, reply.model)
-    except VerdictError:
+        return _read_logged(reply, batch, where)
+    except VerdictError as error:
+        _log.warning(
+            "%s: unusable again (%s), giving up:\n%s", where, error, reply.text
+        )
         return {}
+
+
+def _read_logged(reply, batch, where):
+    """read_verdicts, logging how many of the answer's verdicts were usable."""
+    verdicts = read_verdicts(reply.text, batch, reply.model)
+    _log.info("%s: %d usable verdicts from %s", where, len(verdicts), reply.model)
+    return verdicts
 
 
 def _context(file, number, word):

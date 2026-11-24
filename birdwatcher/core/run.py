@@ -4,6 +4,7 @@ Running checks over a course folder, and the result the app and console show.
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
+import logging
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -12,6 +13,8 @@ from pathlib import Path
 
 from birdwatcher.core.check import Check, CheckContext, CheckStopped
 from birdwatcher.core.findings import Finding
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -180,11 +183,22 @@ def run_checks(
         try:
             findings, error = tuple(check.run(context)), None
         except CheckStopped:
+            _log.info(
+                "check %s stopped after %.1f s", check.id, time.perf_counter() - start
+            )
             stopped = True
             break
         except Exception as exception:  # noqa: BLE001 - one broken check must not stop the run
+            _log.exception("check %s failed", check.id)
             findings, error = (), f"{type(exception).__name__}: {exception}"
         result = CheckResult(check, findings, time.perf_counter() - start, error)
+        if error is None:
+            _log.info(
+                "check %s: %d findings in %.2f s",
+                check.id,
+                len(findings),
+                result.seconds,
+            )
         results.append(result)
         notify(CheckFinished(result))
     return RunResult(

@@ -6,6 +6,7 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
 import itertools
+import logging
 import threading
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -33,6 +34,16 @@ from textual.widgets import (
 )
 
 from birdwatcher.checks.spelling import word_of
+from birdwatcher.checks.spelling_triage import (
+    KEEP,
+    ai_fix,
+    estimate,
+    load_verdicts,
+    questions_for,
+    save_verdicts,
+    triage,
+)
+from birdwatcher.core.ai import AiError
 from birdwatcher.core.config import DEFAULT_SPLIT, SPLIT_RANGE
 from birdwatcher.core.dictionary import DictionaryError, add_words
 from birdwatcher.core.findings import Severity
@@ -40,6 +51,7 @@ from birdwatcher.core.fix_log import FixedFinding, load_fixed, save_fixed
 from birdwatcher.core.fixes import FixError, apply_fix, undo_fix
 from birdwatcher.core.ignores import ignore_finding, load_ignores, save_ignores
 from birdwatcher.core.run import CheckFinished, CheckProgress, CheckStarted, RunResult
+from birdwatcher.ui.tui.ask_ai import AskAiDialog
 from birdwatcher.ui.tui.divider import Divider
 from birdwatcher.ui.tui.fix_all import FixAllDialog
 from birdwatcher.ui.tui.grouping import Grouping, group_rows
@@ -70,8 +82,11 @@ BUTTON_ACTIONS = {
     "ignore": "ignore",
     "unignore": "ignore",
     "add-word": "add_word",
+    "ask-ai": "ask_ai",
 }
 STOP_BUTTON = "stop"  # the watch strip's button, which runs action_stop
+
+_log = logging.getLogger(__name__)
 
 
 class FindingsScreen(Screen):
@@ -99,6 +114,25 @@ class FindingsScreen(Screen):
             showing; the SHOW chips (or keys 1, 2, 3) change them.
         save_severities (Callable[[frozenset[Severity]], object]): Remembers
             the shown severities whenever they change.
+        ai_connection (Callable[[], Connection]): The chosen AI model, from
+            the saved settings; raises AiError (no key, no model) with a
+            message for people. None means no AI is set up.
+        send_chat (Callable[[Connection, list[dict]], Reply]): Sends one
+            conversation (core.ai.chat); called on a background thread, only
+            when the user asks (m).
+        verdict_path (Path | None): Where the AI's spelling verdicts are
+            remembered per course folder; None remembers none.
+
+    Asking the AI (m): only on the user's request is a model ever asked. On
+    an open spelling finding, m asks about its word at once (asking again
+    when it already has a verdict); on a branch, m first shows the cost
+    (spelling_triage.estimate, in an AskAiDialog) of asking about the
+    branch's words that have no verdict yet. Verdicts are remembered per
+    course folder; a finding whose word has one shows it (typo or keep, the
+    reason, the model) and its fix becomes spelling_triage.ai_fix's (none
+    for a word to keep), so f, FIX ALL, undo and the fix log treat it like
+    any fix. A missing setup or a failed request is reported in a
+    notification, with the tokens used when there were any.
     """
 
     # The footer shows only what applies to the selection (check_action hides
@@ -112,6 +146,7 @@ class FindingsScreen(Screen):
         Binding("c", "clear", "Clear"),
         Binding("i", "ignore", "Ignore / un-ignore"),
         Binding("a", "add_word", "Add to dictionary"),
+        Binding("m", "ask_ai", "Ask AI"),
         Binding("escape", "unzoom", "Back"),
         Binding("x", "stop", "Stop checking"),
         Binding("question_mark", "show_keys", "Keys"),
@@ -146,8 +181,17 @@ class FindingsScreen(Screen):
         save_split=None,
         shown_severities=frozenset(Severity),
         save_severities=None,
+        ai_connection=None,
+        send_chat=None,
+        verdict_path=None,
     ):
         super().__init__()
+        self._ai_connection = ai_connection
+        self._send_chat = send_chat
+        self._verdict_path = verdict_path
+        self._verdicts = {}  # the AI's spelling verdicts, by lowercased word
+        self._ai_fixes = {}  # (finding, verdict) -> its AI fix, until a re-check
+        self._asking = False  # a request to the model is under way
         self._shown_severities = frozenset(shown_severities)
         self._save_severities = save_severities or (lambda severities: None)
         self._split = split
@@ -220,6 +264,7 @@ class FindingsScreen(Screen):
                     yield Button(Content("[I] IGNORE"), id="ignore")
                     yield Button(Content("[I] UN-IGNORE"), id="unignore")
                     yield Button(Content("[A] ADD TO DICTIONARY"), id="add-word")
+                    yield Button(Content("[M] ASK AI"), id="ask-ai")
                 # A branch's findings, below its FIX ALL button
                 yield Static(id="branch-list")
         yield Footer()
@@ -264,6 +309,7 @@ class FindingsScreen(Screen):
 
     def change_course(self, course_dir):
         """Switch to another course folder and check it."""
+        _log.info("switching to the course %s", course_dir)
         self.course_dir = course_dir
         self._run, self._stale = None, set()  # another course's findings don't apply
         self.query_one(WatchStrip).hide()
@@ -273,6 +319,11 @@ class FindingsScreen(Screen):
     def _load_course_state(self):
         self._fixed = load_fixed(self._fix_log_path, self.course_dir)
         self._ignores = load_ignores(self._ignore_path, self.course_dir)
+        self._verdicts = (
+            {}
+            if self._verdict_path is None
+            else load_verdicts(self._verdict_path, self.course_dir)
+        )
 
     # Checking
 
@@ -280,6 +331,7 @@ class FindingsScreen(Screen):
         # A new generation makes any run still going stop at its next progress
         # report, and drops whatever it sends from then on.
         self._generation += 1
+        self._ai_fixes = {}  # files may have changed
         self._stop_asked = threading.Event()
         self._running = True
         self._running_title = None
@@ -287,6 +339,11 @@ class FindingsScreen(Screen):
             self._stale = {result.check.id for result in self._run.results}
         self.app.sub_title = f"{self.course_dir}  ·  checking..."
         self.refresh_bindings()
+        _log.info(
+            "checking %s%s",
+            self.course_dir,
+            " (asking web sites afresh)" if fresh else "",
+        )
         generation, stop_asked = self._generation, self._stop_asked
         self._check_in_background(
             self.course_dir,
@@ -353,6 +410,14 @@ class FindingsScreen(Screen):
         if generation != self._generation:
             return
         self._running = False
+        count = len(run.findings)
+        _log.info(
+            "checked %s: %d %s%s",
+            self.course_dir,
+            count,
+            "finding" if count == 1 else "findings",
+            " (stopped before the end)" if run.stopped else "",
+        )
         strip = self.query_one(WatchStrip)
         if run.stopped:
             if self._run is None:
@@ -378,6 +443,7 @@ class FindingsScreen(Screen):
     def _show_error(self, generation, error):
         if generation != self._generation:
             return
+        _log.error("checking %s failed", self.course_dir, exc_info=error)
         self._running = False
         self.query_one(WatchStrip).hide()
         self.refresh_bindings()
@@ -389,7 +455,7 @@ class FindingsScreen(Screen):
 
     def _show_rows(self):
         open_rows, ignored_rows = [], []
-        for finding in self._run.findings:
+        for finding in map(self._with_ai_fix, self._run.findings):
             ignore = self._ignore_for(finding)
             if ignore is None:
                 open_rows.append(Row(finding))
@@ -563,9 +629,16 @@ class FindingsScreen(Screen):
         fix = finding.fix
         buttons["ignore"].display = row.is_open
         buttons["unignore"].display = row.ignore is not None
-        buttons["add-word"].display = row.is_open and word_of(finding) is not None
+        spelled = row.is_open and word_of(finding) is not None
+        verdict = self._verdict_for(finding) if spelled else None
+        buttons["add-word"].display = spelled
+        buttons["ask-ai"].display = spelled and self._ai_connection is not None
+        buttons["ask-ai"].label = Content(
+            "[M] ASK AI AGAIN" if verdict else "[M] ASK AI"
+        )
         if row.is_open and fix is not None:
-            summary.update(_change("Suggested fix (f):", fix))
+            label = "AI fix (f):" if verdict else "Suggested fix (f):"
+            summary.update(_change(label, fix))
             summary.display = True
             buttons["fix"].label = Content("[F] FIX")
             buttons["fix"].display = True
@@ -604,6 +677,9 @@ class FindingsScreen(Screen):
             header.append(f"{note}\n\n", style="italic")
         header.append(finding.message)
         header.append("\n")
+        verdict = self._verdict_for(finding) if row.is_open else None
+        if verdict is not None:
+            header.append_text(_verdict_text(verdict, finding.fix))
         return header
 
     def _check_title(self, finding):
@@ -683,7 +759,138 @@ class FindingsScreen(Screen):
             return row is not None
         if action == "add_word":
             return row is not None and row.is_open and word_of(row.finding) is not None
+        if action == "ask_ai":
+            if self._asking or self._ai_connection is None or not self.is_mounted:
+                return False
+            if row is None:
+                return bool(self._unasked_in_branch())
+            return row.is_open and word_of(row.finding) is not None
         return True
+
+    # Asking the AI
+
+    def _verdict_for(self, finding):
+        word = word_of(finding)
+        return None if word is None else self._verdicts.get(word.lower())
+
+    def _with_ai_fix(self, finding):
+        """The finding with the fix its word's verdict decides (in place of
+        the check's own), or unchanged when its word has no verdict."""
+        verdict = self._verdict_for(finding)
+        if verdict is None:
+            return finding
+        key = (finding, verdict)
+        if key not in self._ai_fixes:
+            self._ai_fixes[key] = ai_fix(self.course_dir, finding, verdict)
+        return replace(finding, fix=self._ai_fixes[key])
+
+    def _unasked_in_branch(self):
+        """The open spelling findings under the branch at the cursor whose
+        words have no verdict yet (empty off a branch)."""
+        branch = self.query_one(FindingsTree).current_branch()
+        return [] if branch is None else self._unasked_under(branch)
+
+    def _unasked_under(self, node):
+        return [
+            row.finding
+            for row in FindingsTree.rows_under(node)
+            if row.is_open
+            and word_of(row.finding) is not None
+            and self._verdict_for(row.finding) is None
+        ]
+
+    def action_ask_ai(self):
+        """Ask the model about the selected word, or (after showing the cost)
+        about a branch's words; see the class docs."""
+        if not self.check_action("ask_ai", ()):
+            return
+        try:
+            connection = self._ai_connection()
+        except AiError as error:
+            self.notify(str(error), severity="error")
+            return
+        row = self._current()
+        if row is not None:
+            self._ask(connection, questions_for(self.course_dir, [row.finding]))
+            return
+        branch = self.query_one(FindingsTree).current_branch()
+        questions = questions_for(self.course_dir, self._unasked_in_branch())
+
+        def answered(confirmed):
+            if confirmed:
+                self._ask(connection, questions)
+
+        cost = estimate(questions)
+        dialog = AskAiDialog(branch.data.labels[-1], cost, connection.model)
+        self.app.push_screen(dialog, answered)
+
+    def _ask(self, connection, questions):
+        if not questions:
+            return
+        self._asking = True
+        self.refresh_bindings()
+        words = "1 word" if len(questions) == 1 else f"{len(questions):,} words"
+        _log.info(
+            "asking %s about %s: %s",
+            connection.model,
+            words,
+            ", ".join(question.word for question in questions),
+        )
+        self.notify(f"Asking {connection.model} about {words}…")
+        self._ask_in_background(self.course_dir, connection, questions)
+
+    @work(thread=True)
+    def _ask_in_background(self, course_dir, connection, questions):
+        # A thread worker that raises would close the app (see _check_in_background).
+        def ask(messages):
+            return self._send_chat(connection, messages)
+
+        try:
+            result = triage(questions, ask)
+        except Exception as error:  # noqa: BLE001
+            self.app.call_from_thread(self._asked_failed, course_dir, error)
+        else:
+            self.app.call_from_thread(self._asked, course_dir, len(questions), result)
+
+    def _asked_failed(self, course_dir, error):
+        _log.error("asking the AI failed", exc_info=error)
+        self._asking = False
+        self.refresh_bindings()
+        self.notify(f"Could not ask the AI: {error}", severity="error")
+
+    def _asked(self, course_dir, asked, result):
+        """Keep a triage's verdicts and report it (dropped when the course
+        changed meanwhile)."""
+        self._asking = False
+        self.refresh_bindings()
+        if course_dir != self.course_dir:
+            _log.info("AI verdicts dropped: the course changed while asking")
+            return
+        for verdict in result.verdicts.values():
+            _log.info(
+                "verdict on '%s': %s%s (%s)",
+                verdict.word,
+                verdict.kind,
+                f" -> '{verdict.correction}'" if verdict.correction else "",
+                verdict.reason,
+            )
+        self._verdicts.update(result.verdicts)
+        if self._verdict_path is not None and result.verdicts:
+            save_verdicts(self._verdict_path, self.course_dir, self._verdicts)
+        tokens = result.input_tokens + result.output_tokens
+        used = f" ({tokens:,} tokens)" if tokens else ""
+        if result.error:
+            self.notify(f"{result.error}{used}", severity="error")
+        else:
+            got = len(result.verdicts)
+            report = f"AI verdicts on {got} of {asked} words{used}."
+            if result.unanswered:
+                report += f" No answer about: {', '.join(result.unanswered)}."
+            self.notify(
+                report, severity="warning" if result.unanswered else "information"
+            )
+        if self._run is not None:
+            self._show_rows()
 
     def action_add_word(self):
         row = self._current()
@@ -695,6 +902,7 @@ class FindingsScreen(Screen):
         except DictionaryError as error:
             self.notify(f"Not added: {error}", severity="error")
             return
+        _log.info("added '%s' to %s", word, written)
         self.notify(f"Added '{word}' to {written.name}.")
         self._start_checking()
 
@@ -717,6 +925,7 @@ class FindingsScreen(Screen):
             return
         finding = row.finding
         if row.ignore is not None:
+            _log.info("un-ignored %s", _describe(finding))
             self._ignores = [i for i in self._ignores if not i.matches(finding)]
             self._save_ignores()
             self._show_rows()
@@ -725,6 +934,7 @@ class FindingsScreen(Screen):
         def ignored(reason):
             if reason is None:
                 return
+            _log.info("ignored %s, reason: %s", _describe(finding), reason or "(none)")
             self._ignores.append(ignore_finding(finding, reason, datetime.now(UTC)))
             self._save_ignores()
             self._show_rows()
@@ -743,6 +953,7 @@ class FindingsScreen(Screen):
         if event.button.id == STOP_BUTTON:
             action = "stop"
         if action is not None:
+            _log.info("button %s: action %s", event.button.id, action)
             event.stop()
             # The action methods directly: Screen.run_action is a coroutine.
             getattr(self, f"action_{action}")()
@@ -780,6 +991,7 @@ class FindingsScreen(Screen):
         except FixError as error:
             self.notify(f"Not fixed: {error}", severity="error")
             return
+        _log.info("fixed %s", _describe_fix(row.finding))
         fixed = FixedFinding(row.finding, datetime.now(UTC))
         self._fixed.append(fixed)
         self._save_fixed()
@@ -815,8 +1027,10 @@ class FindingsScreen(Screen):
             try:
                 apply_fix(self.course_dir / finding.path, finding.fix)
             except FixError as error:
+                _log.warning("fix all: not fixed %s: %s", _describe_fix(finding), error)
                 failures.append((finding, error))
                 continue
+            _log.info("fix all: fixed %s", _describe_fix(finding))
             self._fixed.append(FixedFinding(finding, datetime.now(UTC)))
         self._save_fixed()
         done = len(findings) - len(failures)
@@ -866,6 +1080,18 @@ class FindingsScreen(Screen):
             text.append(f"{len(fixable)} can be fixed, in {files} {noun}.\n")
         else:
             text.append("Nothing here can be fixed automatically.\n")
+        verdicts = {
+            verdict.word: verdict
+            for verdict in (self._verdict_for(row.finding) for row in rows)
+            if verdict is not None
+        }.values()
+        if verdicts:
+            keep = sum(1 for verdict in verdicts if verdict.kind == KEEP)
+            typos = len(verdicts) - keep
+            text.append(
+                f"AI verdicts: {typos} {'typo' if typos == 1 else 'typos'}, "
+                f"{keep} to keep.\n"
+            )
         if self._batch_report is not None and self._batch_report[0] == node.data:
             text.append("\n")
             text.append_text(self._batch_report[1])
@@ -873,7 +1099,12 @@ class FindingsScreen(Screen):
         fix_button = self.query_one("#fix", Button)
         fix_button.label = Content(f"[F] FIX ALL {len(fixable)}")
         fix_button.display = bool(fixable)
-        self.query_one("#actions").display = bool(fixable)
+        unasked = {word_of(finding).lower() for finding in self._unasked_under(node)}
+        ask_button = self.query_one("#ask-ai", Button)
+        noun = "WORD" if len(unasked) == 1 else "WORDS"
+        ask_button.label = Content(f"[M] ASK AI ABOUT {len(unasked)} {noun}")
+        ask_button.display = bool(unasked) and self._ai_connection is not None
+        self.query_one("#actions").display = fix_button.display or ask_button.display
         listing = self.query_one("#branch-list", Static)
         listing.update(self._branch_listing(rows))
         listing.display = bool(rows)
@@ -924,6 +1155,7 @@ class FindingsScreen(Screen):
         except FixError as error:
             self.notify(f"Not undone: {error}", severity="error")
             return
+        _log.info("undid %s", _describe_fix(row.finding))
         self._fixed.remove(row.fixed)
         self._save_fixed()
         self._next_cursor = Row(row.finding).key  # land on the reopened finding
@@ -979,6 +1211,45 @@ def _fix_edits(fix):
         (f"line {line}: " if several else "", before, after)
         for line, before, after in edits
     ]
+
+
+def _describe(finding):
+    """A finding for the log: check, file, line and message."""
+    line = "" if finding.line is None else f" line {finding.line}"
+    return f"{finding.check} {finding.path}{line}: {finding.message}"
+
+
+def _describe_fix(finding):
+    """A finding's fix for the log: where, and each change."""
+    changes = "; ".join(
+        f"line {line}: '{before}' -> '{after}'"
+        for line, before, after in [
+            (finding.fix.line, finding.fix.before, finding.fix.after),
+            *((e.line, e.before, e.after) for e in finding.fix.also),
+        ]
+    )
+    return f"{finding.path} ({finding.check}) {changes}"
+
+
+def _verdict_text(verdict, fix):
+    """The AI's verdict on a finding's word, and what can be done with it
+    (fix is the finding's fix, which the verdict decided)."""
+    text = Text("\n")
+    text.append(" AI ", style="reverse bold")
+    if verdict.kind == KEEP:
+        text.append("  keep: spelled as meant\n", style="bold")
+    else:
+        text.append(f"  typo: '{verdict.correction}'\n", style="bold")
+    text.append(f"{verdict.reason or 'No reason given.'}  ({verdict.model})\n")
+    if verdict.kind == KEEP:
+        text.append("Press a to add it to the course's dictionary.\n", style="italic")
+    elif fix is None:
+        text.append(
+            "No fix offered: the word is in code or part of a longer name, where "
+            "changing one use could break the rest. Fix it by hand.\n",
+            style="italic",
+        )
+    return text
 
 
 def _change(title, fix):

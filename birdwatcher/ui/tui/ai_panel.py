@@ -5,6 +5,7 @@ model, and a test chat to try them.
 Joshua Evans, 2026-11-18 (written with Claude Opus 5.5)
 """
 
+import logging
 from functools import partial
 
 from rich.text import Text
@@ -29,6 +30,7 @@ from birdwatcher.ui.tui.key_dialog import KeyDialog
 from birdwatcher.ui.tui.model_picker import ModelPicker, describe
 
 PROVIDER_ID_PREFIX = "provider-"
+_log = logging.getLogger(__name__)  # never given a key's value
 
 
 class AiPanel(Vertical):
@@ -190,8 +192,10 @@ class AiPanel(Vertical):
         try:
             self._keys.set(self._provider, key)
         except OSError as error:
+            _log.warning("the %s key could not be saved: %s", self._provider, error)
             self._show_key(str(error))
         else:
+            _log.info("a %s key was saved (in the system keyring)", self._provider)
             self._show_key()
 
     # Model
@@ -223,6 +227,7 @@ class AiPanel(Vertical):
             name = PROVIDERS[self._provider].name
             self.app.push_screen(KeyDialog(name), self._key_entered)
         elif button == "forget-key":
+            _log.info("the saved %s key was forgotten", self._provider)
             self._keys.delete(self._provider)
             self._show_key()
         elif button == "pick-model":

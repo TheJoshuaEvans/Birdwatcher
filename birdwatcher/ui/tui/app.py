@@ -16,6 +16,7 @@ the source lines around it. Mouse and keyboard both work:
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
+import logging
 import os
 import webbrowser
 from collections.abc import Callable, Mapping
@@ -29,12 +30,16 @@ from textual import work
 from textual.app import App
 
 from birdwatcher.checks import ALL_CHECKS
+from birdwatcher.checks.spelling_triage import VERDICT_FILE
 from birdwatcher.core.ai import (
     PROVIDERS,
+    AiError,
     KeyStore,
     ModelInfo,
     Reply,
     chat,
+    connect,
+    find_key,
     list_models,
 )
 from birdwatcher.core.config import (
@@ -49,6 +54,7 @@ from birdwatcher.core.course import check_course, course_problem
 from birdwatcher.core.demo import DemoCourse, DemoError
 from birdwatcher.core.fix_log import FIX_LOG_FILE
 from birdwatcher.core.ignores import IGNORE_FILE
+from birdwatcher.core.log import LOG_FILE
 from birdwatcher.core.run import RunResult
 from birdwatcher.core.web import LINK_CACHE_FILE, MAX_AGE, look_up_links
 from birdwatcher.ui.system import (
@@ -61,6 +67,7 @@ from birdwatcher.ui.system import (
 )
 
 DARK_THEME, LIGHT_THEME = "textual-dark", "textual-light"  # for THEME_AUTO
+_log = logging.getLogger(__name__)
 from birdwatcher.ui.tui.findings import FindingsScreen
 from birdwatcher.ui.tui.setup import SetupScreen
 
@@ -193,12 +200,15 @@ class BirdwatcherApp(App):
             course or added to the recent list; choosing a course on the
             setup page leaves it.
         keys (KeyStore | None): Where API keys are saved; None means
-            system.system_key_store() (the system keyring). RESET EVERYTHING
+            system.system_key_store() (the system keyring). RESET SETTINGS
             forgets every provider's saved key.
         environ (Mapping[str, str] | None): The environment variables, for
             API keys; None means os.environ.
         send_chat (Callable[[Connection, list[dict]], Reply]): Sends the test
-            chat's conversation (core.ai.chat).
+            chat's conversation, and the findings view's questions to the
+            model (core.ai.chat). The findings view asks the saved AI model;
+            its spelling verdicts are kept in spelling_triage.VERDICT_FILE
+            beside the settings, which RESET SETTINGS forgets too.
         fetch_models (Callable[[Connection], list[ModelInfo]]): Lists a
             provider's models (core.ai.list_models).
     """
@@ -258,7 +268,42 @@ class BirdwatcherApp(App):
         self._config = None
         self._findings = None
 
+    # The activity log (core.log): every action, notification and crash
+
+    async def run_action(self, action, default_namespace=None, namespaces=None):
+        """Textual's run_action (every key binding and footer click comes
+        through here), logged with the screen it ran on and whether it ran."""
+        ran = await super().run_action(action, default_namespace, namespaces)
+        target = default_namespace or self.screen
+        where = type(target).__name__ + (f"#{target.id}" if target.id else "")
+        _log.info("action %s on %s%s", action, where, "" if ran else " (not available)")
+        return ran
+
+    def notify(
+        self, message, *, title="", severity="information", timeout=None, markup=True
+    ):
+        """Textual's notify, logged with its severity."""
+        level = {"error": logging.ERROR, "warning": logging.WARNING}.get(
+            severity, logging.INFO
+        )
+        _log.log(level, "notification: %s", message)
+        super().notify(
+            message, title=title, severity=severity, timeout=timeout, markup=markup
+        )
+
+    def _handle_exception(self, error):
+        # Textual's private hook for every unhandled exception (the app then
+        # exits); overridden only to log the traceback first.
+        _log.error("crash: %s", error, exc_info=error)
+        super()._handle_exception(error)
+
     def on_mount(self):
+        _log.info(
+            "window %d x %d, settings %s",
+            self.size.width,
+            self.size.height,
+            self._config_path,
+        )
         self._config = load_config(self._config_path)
         config = self._config
         self._apply_theme(THEME_AUTO if config is None else config.theme)
@@ -304,6 +349,7 @@ class BirdwatcherApp(App):
             environ=self._environ,
             send_chat=self._send_chat,
             fetch_models=self._fetch_models,
+            log_path=self._config_path.with_name(LOG_FILE),
         )
 
     def _start_demo(self, refresh):
@@ -348,12 +394,16 @@ class BirdwatcherApp(App):
         """Forget everything saved (settings, fix log, ignores, link cache,
         the downloaded demo), close the course, and start over as on a first
         run."""
+        _log.info(
+            "RESET SETTINGS: settings, fix log, ignores, link cache, verdicts, keys"
+        )
         link_cache = self._config_path.with_name(LINK_CACHE_FILE)
         for path in (
             self._config_path,
             self._fix_log_path,
             self._ignore_path,
             link_cache,
+            self._config_path.with_name(VERDICT_FILE),
         ):
             path.unlink(missing_ok=True)
         for provider_id in PROVIDERS:
@@ -388,6 +438,15 @@ class BirdwatcherApp(App):
         )
         self._config = with_course(chosen, choice.course_dir)
         save_config(self._config_path, self._config)
+        _log.info(
+            "settings saved: course %s, editor %s, theme %s, AI %s / %s%s",
+            choice.course_dir,
+            choice.editor,
+            choice.theme,
+            choice.ai_provider,
+            choice.ai_model,
+            f" at {choice.ai_url}" if choice.ai_url else "",
+        )
         self._apply_theme(choice.theme)
         self._show_findings(choice.course_dir)
 
@@ -434,6 +493,20 @@ class BirdwatcherApp(App):
         if not editor.opens_at_line and line > 1:
             self.notify(f"{editor.name} opens files at the top: look at line {line}.")
 
+    def _ai_connection(self):
+        """The saved AI model, ready to ask (see FindingsScreen)."""
+        settings = self._config or Config(course_dir=Path())
+        provider = PROVIDERS.get(settings.ai_provider)
+        key = None
+        if provider is not None:
+            key = find_key(provider, self._keys.get(provider.id), self._environ)
+        try:
+            return connect(
+                settings.ai_provider, settings.ai_model, key, settings.ai_url
+            )
+        except AiError as error:
+            raise AiError(f"{error} (Setup, s: the AI MODEL tab)") from error
+
     def _show_findings(self, course_dir):
         if self._findings is None:
             # In the demo before any course was saved, the defaults apply.
@@ -450,6 +523,9 @@ class BirdwatcherApp(App):
                 save_split=self._save_split,
                 shown_severities=settings.shown_severities,
                 save_severities=self._save_severities,
+                ai_connection=self._ai_connection,
+                send_chat=self._send_chat,
+                verdict_path=self._config_path.with_name(VERDICT_FILE),
             )
             self.push_screen(self._findings)
         else:

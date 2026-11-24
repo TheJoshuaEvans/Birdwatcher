@@ -74,6 +74,11 @@ KEY_GROUPS = (
             Key("C", "clear every fixed finding", ("clear_all",)),
             Key("i", "ignore / un-ignore", ("ignore",)),
             Key("a", "add a misspelled word to the dictionary", ("add_word",)),
+            Key(
+                "m",
+                "ask the AI about a misspelled word (on a branch: all)",
+                ("ask_ai",),
+            ),
         ),
     ),
     (

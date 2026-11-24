@@ -6,6 +6,7 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 
 import asyncio
 import io
+import logging
 import sys
 
 import pytest
@@ -14,6 +15,7 @@ from rich.console import Console
 from birdwatcher.checks import ALL_CHECKS
 from birdwatcher.cli import EXIT_FAILED, EXIT_OK, main
 from birdwatcher.core.config import Config, save_config
+from birdwatcher.core.log import LOG_FILE
 from birdwatcher.ui.tui.app import BirdwatcherApp
 from birdwatcher.ui.tui.tree import FindingsTree
 
@@ -122,6 +124,27 @@ def test_selected_checks_only(tmp_path):
     status, text, _ = run(tmp_path, "check", "--check", ALL_CHECKS[0].id, course=course)
     assert status == EXIT_OK
     assert ALL_CHECKS[0].id in text
+
+
+# The activity log
+
+
+@pytest.mark.parametrize("command", [[], ["check"]], ids=["app", "check"])
+def test_running_writes_the_log_beside_the_settings(tmp_path, command):
+    course = make_course(tmp_path / "course")
+    run(tmp_path, *command, course=course)
+    log = (tmp_path / "settings" / LOG_FILE).read_text(encoding="utf-8")
+    first = log.splitlines()[0]
+    assert "Birdwatcher" in first and "Python" in first  # what is running
+
+
+def test_logging_stops_when_main_returns(tmp_path):
+    run(tmp_path, "check", course=make_course(tmp_path / "course"))
+    log = tmp_path / "settings" / LOG_FILE
+    before = log.read_text(encoding="utf-8")
+    logging.getLogger("birdwatcher").info("after main")
+    assert log.read_text(encoding="utf-8") == before
+    log.unlink()  # closed: Windows refuses to delete an open file
 
 
 if __name__ == "__main__":

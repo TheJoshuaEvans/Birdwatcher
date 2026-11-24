@@ -9,7 +9,10 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
 import argparse
+import logging
+import platform
 from functools import partial
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from rich.console import Console
@@ -19,6 +22,7 @@ from rich.text import Text
 from birdwatcher.checks import ALL_CHECKS
 from birdwatcher.core.config import default_config_path, load_config
 from birdwatcher.core.course import check_course, course_problem
+from birdwatcher.core.log import LOG_FILE, start_logging, stop_logging
 from birdwatcher.core.web import LINK_CACHE_FILE, look_up_links
 from birdwatcher.ui.console import print_event, print_findings, print_summary
 from birdwatcher.ui.tui.app import BirdwatcherApp
@@ -26,6 +30,8 @@ from birdwatcher.ui.tui.app import BirdwatcherApp
 EXIT_OK = 0
 EXIT_FAILED = 2  # no usable course folder (argparse also uses 2 for bad usage)
 CHECK_COMMAND = "check"
+
+_log = logging.getLogger(__name__)
 
 
 def main(argv=None, *, config_path=None, console=None, run_app=None):
@@ -51,6 +57,10 @@ def main(argv=None, *, config_path=None, console=None, run_app=None):
         run_app (Callable[[BirdwatcherApp], object] | None): Runs the app until
             it is closed; None means BirdwatcherApp.run.
 
+    Both write the activity log (core.log.LOG_FILE, next to the settings)
+    while they run, starting with the version, Python and system, and stop
+    writing it before returning.
+
     Returns:
         int: EXIT_OK after the app closes, or after `check` finishes whatever it
             found; EXIT_FAILED if `check` has no usable course folder (none
@@ -58,13 +68,36 @@ def main(argv=None, *, config_path=None, console=None, run_app=None):
             arguments exit through argparse (status 2).
     """
     args = _parser().parse_args(argv)
-    config_path = config_path or default_config_path()
-    if args.command == CHECK_COMMAND:
-        return _check(args, config_path, console or Console())
+    config_path = Path(config_path or default_config_path())
+    handler = start_logging(config_path.with_name(LOG_FILE))
+    try:
+        _log.info(
+            "Birdwatcher %s starting (%s) on Python %s, %s",
+            _version(),
+            args.command or "app",
+            platform.python_version(),
+            platform.platform(),
+        )
+        if args.command == CHECK_COMMAND:
+            status = _check(args, config_path, console or Console())
+        else:
+            run_app = run_app or BirdwatcherApp.run
+            run_app(BirdwatcherApp(config_path))
+            status = EXIT_OK
+        _log.info("Birdwatcher finished (exit status %d)", status)
+        return status
+    except BaseException:
+        _log.exception("Birdwatcher stopped by an error")
+        raise
+    finally:
+        stop_logging(handler)
 
-    run_app = run_app or BirdwatcherApp.run
-    run_app(BirdwatcherApp(config_path))
-    return EXIT_OK
+
+def _version():
+    try:
+        return version("birdwatcher")
+    except PackageNotFoundError:
+        return "(version unknown)"
 
 
 def _check(args, config_path, console):

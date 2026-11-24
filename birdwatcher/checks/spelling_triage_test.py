@@ -7,6 +7,7 @@ Joshua Evans, 2026-11-23 (written with Claude Opus 5.5)
 """
 
 import json
+import logging
 
 import pytest
 
@@ -338,3 +339,18 @@ def test_verdicts_are_remembered_per_course(tmp_path):
 
 def test_nothing_remembered_is_empty(tmp_path):
     assert load_verdicts(tmp_path / "verdicts.json", tmp_path) == {}
+
+
+# The activity log
+
+
+def test_each_request_and_retry_is_logged(caplog):
+    caplog.set_level(logging.DEBUG, logger="birdwatcher")
+    questions = [question(f"wordy{i}") for i in range(WORDS_PER_REQUEST + 1)]
+    first = answer(*(keep(q.word) for q in questions[:WORDS_PER_REQUEST]))
+    model = FakeModel(reply(first), reply("not JSON"), reply(answer()))
+    triage(questions, model)
+    logged = caplog.text
+    assert "1 of 2" in logged and "2 of 2" in logged  # each request, numbered
+    assert "not JSON" in logged  # the unusable answer, and asking again
+    assert "wordy40" in logged  # the word left without a verdict

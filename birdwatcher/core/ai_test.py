@@ -8,7 +8,9 @@ without touching the network.
 Joshua Evans, 2026-11-18 (written with Claude Opus 5.5)
 """
 
+import contextlib
 import json
+import logging
 
 import httpx2
 import pytest
@@ -352,3 +354,45 @@ def test_a_failed_model_list_is_an_error():
     server = answering(401, {"error": {"message": "Invalid credentials"}})
     with pytest.raises(AiError, match="Invalid credentials"):
         list_models(openrouter(), transport=server.transport)
+
+
+# The activity log
+
+
+def birdwatcher_log(caplog):
+    """What Birdwatcher's own loggers wrote (other libraries' are not kept)."""
+    return "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.name.startswith("birdwatcher")
+    )
+
+
+def test_a_request_is_logged_in_full(caplog):
+    caplog.set_level(logging.DEBUG, logger="birdwatcher")
+    server = answering(200, completion("Paris", model="google/gemma"))
+    chat(openrouter(), CONVERSATION, transport=server.transport)
+    logged = birdwatcher_log(caplog)
+    for text in ("openrouter/free", "Answer in one word.", "Capital of France?"):
+        assert text in logged  # the model and every message sent
+    assert "Paris" in logged and "google/gemma" in logged  # the answer
+    assert "12" in logged and "3" in logged  # tokens read and written
+
+
+def test_a_failed_request_is_logged_with_its_reason(caplog):
+    caplog.set_level(logging.DEBUG, logger="birdwatcher")
+    server = answering(429, {"error": {"message": "Rate limit exceeded"}})
+    with pytest.raises(AiError):
+        chat(openrouter(), CONVERSATION, transport=server.transport)
+    assert "Rate limit exceeded" in birdwatcher_log(caplog)
+
+
+def test_the_api_key_is_never_logged(caplog):
+    caplog.set_level(logging.DEBUG)
+    for status, body in ((200, completion()), (401, {"error": {"message": "no"}})):
+        server = answering(status, body)
+        with contextlib.suppress(AiError):
+            chat(openrouter(), CONVERSATION, transport=server.transport)
+        list_models(openrouter(), transport=answering(200, {"data": []}).transport)
+    assert birdwatcher_log(caplog)  # something was logged
+    assert SECRET not in birdwatcher_log(caplog)

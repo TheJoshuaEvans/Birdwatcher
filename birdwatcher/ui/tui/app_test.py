@@ -5,7 +5,10 @@ Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
 import asyncio
+import contextlib
 import io
+import json
+import logging
 import re
 import sys
 from dataclasses import replace
@@ -24,7 +27,7 @@ from textual.widgets import (
     Static,
 )
 
-from birdwatcher.core.ai import memory_key_store
+from birdwatcher.core.ai import AiError, Reply, memory_key_store
 from birdwatcher.core.check import Check
 from birdwatcher.core.config import Config, load_config, save_config
 from birdwatcher.core.demo import DemoError
@@ -32,9 +35,11 @@ from birdwatcher.core.dictionary import course_words
 from birdwatcher.core.findings import Destination, Edit, Finding, Fix, Severity
 from birdwatcher.core.fix_log import FIX_LOG_FILE, load_fixed
 from birdwatcher.core.ignores import IGNORE_FILE, load_ignores
+from birdwatcher.core.log import LOG_FILE
 from birdwatcher.core.run import CheckResult, RunResult
 from birdwatcher.ui.system import Editor
 from birdwatcher.ui.tui.app import BirdwatcherApp
+from birdwatcher.ui.tui.ask_ai import AskAiDialog
 from birdwatcher.ui.tui.divider import Divider
 from birdwatcher.ui.tui.fix_all import FixAllDialog
 from birdwatcher.ui.tui.keys import KeysDialog
@@ -538,7 +543,13 @@ def test_q_in_the_path_box_is_just_a_letter(tmp_path):
     drive(app, steps)
 
 
-SAVED_FILES = ("config.json", "fixes.json", "ignored.json", "links.json")
+SAVED_FILES = (
+    "config.json",
+    "fixes.json",
+    "ignored.json",
+    "links.json",
+    "spelling-verdicts.json",
+)
 
 
 def saved_state(tmp_path):
@@ -2470,6 +2481,489 @@ def test_fixed_findings_cannot_be_ignored(tmp_path):
         assert not is_visible(app, "#ignore")
 
     drive(app, steps)
+
+
+# Asking the AI (m)
+
+SPELLING_PAGE = "Spelling\nWe use sckit here.\nAsk Claude Sonet.\nRun `numpi` now.\n"
+SCKIT = Finding(
+    "spelling",
+    Severity.WARNING,
+    "docs/S.md",
+    2,
+    "'sckit' is not in the dictionary. Did you mean 'skit'?",
+    Fix(2, "sckit", "skit"),
+)
+SONET = Finding(
+    "spelling",
+    Severity.ERROR,
+    "docs/S.md",
+    3,
+    "'Sonet' is not in the dictionary. Did you mean one of: sonnet, sonnets?",
+)
+NUMPI = Finding(
+    "spelling", Severity.ERROR, "docs/S.md", 4, "'numpi' is not in the dictionary."
+)
+API_KEY = "sk-or-v1-test-key"
+AI_MODEL = "test/model-1"
+
+
+class FakeChat:
+    """Stands in for core.ai.chat: answers every conversation with verdicts
+    on `words` ({word: correction, or None to keep}; words not asked about
+    are dropped by the app) and records each (connection, messages). The
+    exceptions in `failures` are raised first, one per call."""
+
+    def __init__(self, words, failures=()):
+        self.words = words
+        self.failures = list(failures)
+        self.calls = []
+
+    def __call__(self, connection, messages):
+        self.calls.append((connection, messages))
+        if self.failures:
+            raise self.failures.pop(0)
+        verdicts = [
+            {
+                "word": word,
+                "verdict": "keep" if correction is None else "typo",
+                "correction": correction,
+                "reason": f"the reason for {word}",
+            }
+            for word, correction in self.words.items()
+        ]
+        return Reply(json.dumps({"verdicts": verdicts}), AI_MODEL, 120, 30, 0.5)
+
+    def questions(self):
+        """The last message of each conversation sent."""
+        return [messages[-1]["content"] for _, messages in self.calls]
+
+
+def ai_app(tmp_path, chat, findings=(SCKIT, SONET), keys=None):
+    """An app on a course whose docs/S.md holds SPELLING_PAGE, checked as
+    `findings`, with an OpenRouter key saved (unless `keys` says otherwise)."""
+    course = make_course(tmp_path / "course")
+    (course / "docs" / "S.md").write_text(SPELLING_PAGE, encoding="utf-8")
+    keys = {"openrouter": API_KEY} if keys is None else keys
+    app, _ = make_app(
+        tmp_path, FakeChecker(list(findings)), course, keys=keys, send_chat=chat
+    )
+    return app, course
+
+
+def page_line(course, number):
+    return (
+        (course / "docs" / "S.md").read_text(encoding="utf-8").split("\n")[number - 1]
+    )
+
+
+def record_notes(app):
+    notes = []  # Textual's notify, recorded: notifications aren't readable otherwise
+    app.notify = lambda message, **options: notes.append(message)
+    return notes
+
+
+def test_the_model_is_never_asked_until_m(tmp_path):
+    chat = FakeChat({"sckit": "scikit"})
+    app, _ = ai_app(tmp_path, chat)
+
+    async def steps(app, pilot):
+        assert "m" in footer_keys(app)
+        assert is_visible(app, "#ask-ai")
+        await press(app, pilot, "n", "p", "r")
+        await on_check_branch(app, pilot)
+        assert chat.calls == []
+
+    drive(app, steps)
+
+
+@pytest.mark.parametrize("how", ["key", "button"])
+def test_m_asks_about_the_word_and_its_verdict_becomes_the_fix(tmp_path, how):
+    chat = FakeChat({"sckit": "scikit"})
+    app, course = ai_app(tmp_path, chat)
+
+    async def steps(app, pilot):
+        if how == "key":
+            await press(app, pilot, "m")
+        else:
+            await pilot.click("#ask-ai")
+            await settle(app, pilot)
+        [(connection, _)] = chat.calls
+        assert connection.model == "openrouter/free"  # the default setup
+        assert connection.key.value == API_KEY
+        assert "sckit" in chat.questions()[0]
+        assert "Sonet" not in chat.questions()[0]  # only the selected word
+        text = panel_text(app)
+        assert "typo" in text.lower()
+        assert "scikit" in text and "the reason for sckit" in text
+        assert AI_MODEL in text
+        await press(app, pilot, "f")
+        assert page_line(course, 2) == "We use scikit here."
+
+    drive(app, steps)
+
+
+def test_a_word_to_keep_drops_the_dictionarys_guess(tmp_path):
+    app, _ = ai_app(tmp_path, FakeChat({"sckit": None}))
+
+    async def steps(app, pilot):
+        assert is_visible(app, "#fix")  # the dictionary's 'skit'
+        await press(app, pilot, "m")
+        assert "keep" in panel_text(app).lower()
+        assert not is_visible(app, "#fix")
+        assert "f" not in footer_keys(app)
+        assert "a" in footer_keys(app)  # adding it to the dictionary remains
+
+    drive(app, steps)
+
+
+def test_a_typo_in_code_is_left_to_fix_by_hand(tmp_path):
+    app, course = ai_app(tmp_path, FakeChat({"numpi": "numpy"}), findings=(NUMPI,))
+
+    async def steps(app, pilot):
+        await press(app, pilot, "m")
+        text = " ".join(panel_text(app).split())  # however the panel wraps
+        assert "numpy" in text and "by hand" in text
+        assert not is_visible(app, "#fix")
+        await press(app, pilot, "f")
+        assert page_line(course, 4) == "Run `numpi` now."
+
+    drive(app, steps)
+
+
+def test_without_an_api_key_m_explains_and_asks_nothing(tmp_path):
+    chat = FakeChat({"sckit": "scikit"})
+    app, _ = ai_app(tmp_path, chat, keys={})
+
+    async def steps(app, pilot):
+        notes = record_notes(app)
+        await press(app, pilot, "m")
+        assert chat.calls == []
+        assert any("OPENROUTER_API_KEY" in note for note in notes)
+
+    drive(app, steps)
+
+
+def test_a_failed_request_is_reported_and_m_works_again(tmp_path):
+    failure = AiError("OpenRouter limited the rate of requests.")
+    chat = FakeChat({"sckit": "scikit"}, failures=[failure])
+    app, _ = ai_app(tmp_path, chat)
+
+    async def steps(app, pilot):
+        notes = record_notes(app)
+        await press(app, pilot, "m")
+        assert any("limited the rate" in note for note in notes)
+        assert "scikit" not in panel_text(app)
+        await press(app, pilot, "m")
+        assert len(chat.calls) == 2
+        assert "scikit" in panel_text(app)
+
+    drive(app, steps)
+
+
+def test_m_on_a_finding_with_a_verdict_asks_again(tmp_path):
+    chat = FakeChat({"sckit": "scikit"})
+    app, _ = ai_app(tmp_path, chat)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "m", "m")
+        assert len(chat.calls) == 2
+
+    drive(app, steps)
+
+
+def test_m_on_a_branch_shows_the_cost_first_and_cancel_sends_nothing(tmp_path):
+    chat = FakeChat({"sckit": "scikit", "Sonet": "Sonnet"})
+    app, _ = ai_app(tmp_path, chat)
+
+    async def steps(app, pilot):
+        await on_check_branch(app, pilot)
+        await press(app, pilot, "m")
+        assert isinstance(app.screen, AskAiDialog)
+        text = " ".join(
+            render_text(app.screen.query_one("#ask-ai-text", Static).content).split()
+        )
+        assert "2 words" in text and "1 request" in text
+        assert "openrouter/free" in text and "tokens" in text
+        await press(app, pilot, "escape")
+        assert not isinstance(app.screen, AskAiDialog)
+        assert chat.calls == []
+
+    drive(app, steps)
+
+
+@pytest.mark.parametrize("how", ["enter", "button"])
+def test_asking_on_a_branch_sends_its_words_together(tmp_path, how):
+    chat = FakeChat({"sckit": "scikit", "Sonet": "Sonnet"})
+    app, _ = ai_app(tmp_path, chat)
+
+    async def steps(app, pilot):
+        notes = record_notes(app)
+        await on_check_branch(app, pilot)
+        await press(app, pilot, "m")
+        if how == "enter":
+            await press(app, pilot, "enter")
+        else:
+            await pilot.click("#confirm-ask-ai")
+            await settle(app, pilot)
+        [question] = chat.questions()
+        assert "sckit" in question and "Sonet" in question
+        assert any("150 tokens" in note for note in notes)  # 120 read + 30 written
+        assert "FIX ALL 2" in str(app.screen.query_one("#fix", Button).label)
+
+    drive(app, steps)
+
+
+def test_after_asking_on_a_branch_each_finding_shows_its_own_verdict(tmp_path):
+    chat = FakeChat({"sckit": "scikit", "Sonet": None})
+    app, course = ai_app(tmp_path, chat)
+
+    async def steps(app, pilot):
+        await on_check_branch(app, pilot)
+        await press(app, pilot, "m", "enter")
+        await press(app, pilot, "n")  # the first finding: sckit
+        text = panel_text(app)
+        assert "typo: 'scikit'" in text and "the reason for sckit" in text
+        assert is_visible(app, "#fix")
+        await press(app, pilot, "n")  # the second: Sonet
+        text = panel_text(app)
+        assert "keep" in text and "the reason for Sonet" in text
+        assert not is_visible(app, "#fix")
+        assert len(chat.calls) == 1  # looking costs nothing
+        assert page_line(course, 2) == "We use sckit here."  # nothing applied yet
+
+    drive(app, steps)
+
+
+def test_a_branch_asks_only_about_words_without_a_verdict(tmp_path):
+    chat = FakeChat({"sckit": "scikit", "Sonet": "Sonnet"})
+    app, _ = ai_app(tmp_path, chat)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "m")  # on sckit, the first finding
+        await on_check_branch(app, pilot)
+        await press(app, pilot, "m")
+        text = render_text(app.screen.query_one("#ask-ai-text", Static).content)
+        assert "1 word" in " ".join(text.split())
+        await press(app, pilot, "enter")
+        assert "Sonet" in chat.questions()[1]
+        assert "sckit" not in chat.questions()[1]
+
+    drive(app, steps)
+
+
+def test_a_branch_whose_words_all_have_verdicts_offers_no_asking(tmp_path):
+    chat = FakeChat({"sckit": "scikit", "Sonet": "Sonnet"})
+    app, _ = ai_app(tmp_path, chat)
+
+    async def steps(app, pilot):
+        await on_check_branch(app, pilot)
+        await press(app, pilot, "m", "enter")
+        assert not app.screen.check_action("ask_ai", ())
+        assert not is_visible(app, "#ask-ai")
+        await press(app, pilot, "m")
+        assert len(chat.calls) == 1
+
+    drive(app, steps)
+
+
+def test_verdicts_are_remembered_across_launches(tmp_path):
+    app, course = ai_app(tmp_path, FakeChat({"sckit": "scikit"}))
+
+    async def first(app, pilot):
+        await press(app, pilot, "m")
+
+    drive(app, first)
+    again, _ = make_app(
+        tmp_path, FakeChecker([SCKIT, SONET]), course, keys={"openrouter": API_KEY}
+    )
+
+    async def second(app, pilot):
+        assert "scikit" in panel_text(app)  # no request: the fake chat fails tests
+
+    drive(again, second)
+
+
+def test_m_does_not_apply_to_other_findings(tmp_path):
+    chat = FakeChat({})
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(
+        tmp_path,
+        FakeChecker([FIRST]),
+        course,
+        keys={"openrouter": API_KEY},
+        send_chat=chat,
+    )
+
+    async def steps(app, pilot):
+        assert "m" not in footer_keys(app)
+        assert not is_visible(app, "#ask-ai")
+        await press(app, pilot, "m")
+        assert chat.calls == []
+
+    drive(app, steps)
+
+
+# The activity log
+
+
+def logged(caplog):
+    """What Birdwatcher's own loggers wrote."""
+    return "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.name.startswith("birdwatcher")
+    )
+
+
+def test_keys_and_buttons_are_logged_by_action(tmp_path, caplog):
+    caplog.set_level(logging.DEBUG, logger="birdwatcher")
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIXABLE, SECOND]), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "n")
+        assert "next_finding" in logged(caplog)
+        await press(app, pilot, "p")
+        await pilot.click("#ignore")
+        await settle(app, pilot)
+        assert "ignore" in logged(caplog)
+
+    drive(app, steps)
+
+
+def test_a_fix_is_logged_with_its_change(tmp_path, caplog):
+    caplog.set_level(logging.DEBUG, logger="birdwatcher")
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIXABLE], []), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "f")
+        text = logged(caplog)
+        assert "docs/A.md" in text and "3" in text
+        assert "broken" in text and "fixed" in text
+
+    drive(app, steps)
+
+
+def test_notifications_are_logged(tmp_path, caplog):
+    caplog.set_level(logging.DEBUG, logger="birdwatcher")
+    course = make_course(tmp_path / "course")
+    (course / "cspell.json").write_text("{ // comments\n}", encoding="utf-8")
+    app, _ = make_app(tmp_path, FakeChecker([TYPO]), course)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "a")  # refused: the config cannot be read
+        assert "Not added" in logged(caplog)
+
+    drive(app, steps)
+
+
+def test_a_check_run_is_logged(tmp_path, caplog):
+    caplog.set_level(logging.DEBUG, logger="birdwatcher")
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST, SECOND]), course)
+
+    async def steps(app, pilot):
+        text = logged(caplog)
+        assert str(course) in text and "2 findings" in text
+
+    drive(app, steps)
+
+
+def test_asking_the_ai_is_logged_without_the_key(tmp_path, caplog):
+    caplog.set_level(logging.DEBUG)
+    app, _ = ai_app(tmp_path, FakeChat({"sckit": "scikit"}))
+
+    async def steps(app, pilot):
+        await press(app, pilot, "m")
+        text = logged(caplog)
+        assert "sckit" in text and "openrouter/free" in text
+        assert API_KEY not in text
+
+    drive(app, steps)
+
+
+def write_logs(tmp_path):
+    """An activity log and one moved-aside copy, beside the settings."""
+    settings = tmp_path / "settings"
+    settings.mkdir(parents=True, exist_ok=True)
+    files = [settings / LOG_FILE, settings / f"{LOG_FILE}.1"]
+    for file in files:
+        file.write_text("2026-11-24 10:00:00.000 INFO  app  hello\n", encoding="utf-8")
+    return files
+
+
+def test_the_setup_page_says_where_the_log_is(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course)
+    log = write_logs(tmp_path)[0]
+
+    async def steps(app, pilot):
+        await press(app, pilot, "s")
+        text = " ".join(
+            render_text(
+                app.screen.query_one("#log-status", Static).content, 400
+            ).split()
+        )
+        assert str(log) in text
+
+    drive(app, steps)
+
+
+def test_delete_log_deletes_the_log_and_its_copies(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course)
+    files = write_logs(tmp_path)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "s")
+        await pilot.click("#delete-log")
+        await settle(app, pilot)
+        assert not any(file.exists() for file in files)
+        text = render_text(app.screen.query_one("#log-status", Static).content, 400)
+        assert "empty" in text.lower()
+        assert on_setup(app)  # the page stays
+
+    drive(app, steps)
+
+
+def test_reset_everything_keeps_the_log(tmp_path):
+    course = make_course(tmp_path / "course")
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course)
+    files = write_logs(tmp_path)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "s")
+        await pilot.click("#reset")
+        await settle(app, pilot)
+        text = render_text(app.screen.query_one("#reset-text", Static).content)
+        assert "verdicts" in text and "log" in text
+        await press(app, pilot, "enter")
+        assert all(file.exists() for file in files)
+
+    drive(app, steps)
+
+
+def test_a_crash_is_logged_with_its_traceback(tmp_path, caplog):
+    caplog.set_level(logging.DEBUG, logger="birdwatcher")
+    course = make_course(tmp_path / "course")
+
+    def explode(path, line):
+        raise RuntimeError("the editor exploded")
+
+    editors = {"vscode": Editor("vscode", "VS Code", True, True, explode)}
+    app, _ = make_app(tmp_path, FakeChecker([FIRST]), course, editors=editors)
+
+    async def steps(app, pilot):
+        await press(app, pilot, "o")
+
+    with contextlib.suppress(RuntimeError):
+        drive(app, steps)
+    crash = [
+        r for r in caplog.records if r.name.startswith("birdwatcher") and r.exc_info
+    ]
+    assert crash and "the editor exploded" in str(crash[0].exc_info[1])
 
 
 if __name__ == "__main__":

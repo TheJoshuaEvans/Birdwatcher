@@ -5,6 +5,7 @@ pasting or browsing) and the editor that opens files.
 Joshua Evans, 2026-11-10 (written with Claude Opus 5.5)
 """
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
@@ -39,6 +40,7 @@ from birdwatcher.core.ai import (
 )
 from birdwatcher.core.config import THEME_AUTO
 from birdwatcher.core.course import DOCS_FOLDER, course_problem
+from birdwatcher.core.log import delete_log, log_files
 from birdwatcher.ui.tui.ai_panel import AiPanel
 from birdwatcher.ui.tui.reset import ResetDialog
 
@@ -47,6 +49,7 @@ SETUP_INTRO = (
     f"holds its pages, in {DOCS_FOLDER}/ or at the top."
 )
 EMPTY_PATH = "Enter the path of the course repository's folder."
+_log = logging.getLogger(__name__)
 EDITOR_ID_PREFIX = "editor-"
 MATCH_SYSTEM = "Match the system (light or dark)"
 
@@ -105,7 +108,7 @@ class SetupScreen(Screen):
         preview_theme (Callable[[str], object]): Shows a theme setting while
             the page is open (the app puts the saved one back on cancel).
         reset (Callable[[], object] | None): Forgets everything Birdwatcher
-            has saved; with it, a RESET EVERYTHING button asks first (see
+            has saved but the log; with it, a RESET SETTINGS button asks first (see
             reset.ResetDialog) and calls it when confirmed.
         start_demo (Callable[[bool], object] | None): Opens the demo course;
             with it, a TRY THE DEMO button calls it with False, and (when
@@ -122,6 +125,10 @@ class SetupScreen(Screen):
             chat's conversation (core.ai.chat).
         fetch_models (Callable[[Connection], list[ModelInfo]]): Lists a
             provider's models (core.ai.list_models).
+        log_path (Path | None): The activity log (core.log); with it, COURSE
+            shows where it is and how large (#log-status), and a DELETE LOG
+            button (#delete-log) deletes it and its moved-aside copies at
+            once, leaving the page open.
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -161,8 +168,10 @@ class SetupScreen(Screen):
         environ=None,
         send_chat=chat,
         fetch_models=list_models,
+        log_path=None,
     ):
         super().__init__()
+        self._log_path = log_path
         self._ai = {
             "provider": ai_provider,
             "model": ai_model,
@@ -253,11 +262,15 @@ class SetupScreen(Screen):
                     yield refresh
                 if self._reset is not None:
                     yield Button(
-                        Content("RESET EVERYTHING…"), variant="error", id="reset"
+                        Content("RESET SETTINGS…"), variant="error", id="reset"
                     )
+                if self._log_path is not None:
+                    yield Button(Content("DELETE LOG"), id="delete-log")
             status = Static(id="demo-status")
             status.display = False
             yield status
+            if self._log_path is not None:
+                yield Static(id="log-status")
         yield Footer()
 
     def show_demo_status(self, text, problem=False):
@@ -275,6 +288,16 @@ class SetupScreen(Screen):
     def on_mount(self):
         self.query_one("#setup").border_title = Content("[ COURSE FOLDER ]")
         self.query_one("#setup-ai").border_title = Content("[ AI MODEL ]")
+        self._show_log()
+
+    def _show_log(self):
+        if self._log_path is None:
+            return
+        size = sum(file.stat().st_size for file in log_files(self._log_path))
+        status = Text("ACTIVITY LOG  ", style="bold")
+        status.append(str(self._log_path), style="underline")
+        status.append(f"  ({size / 1000:,.0f} KB)" if size else "  (empty)")
+        self.query_one("#log-status", Static).update(status)
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated):
         on_ai = event.tab.id == "tab-ai"
@@ -328,6 +351,10 @@ class SetupScreen(Screen):
             self._choose(self._typed_folder())
         elif event.button.id == "reset":
             self.app.push_screen(ResetDialog(), self._reset_answered)
+        elif event.button.id == "delete-log":
+            deleted = delete_log(self._log_path)
+            _log.info("activity log deleted (%d files)", deleted)
+            self._show_log()
         elif event.button.id in ("try-demo", "refresh-demo"):
             self._start_demo(event.button.id == "refresh-demo")
 

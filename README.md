@@ -47,7 +47,7 @@ The first time the app opens, it asks for the folder of your local clone of a co
 
 **Try the demo** on the setup page looks around without a clone of your own: Birdwatcher downloads the CS 212 course materials (about 34 MB) into its cache folder, with the course's word list, and opens them with DEMO in the title. The demo is a fixed snapshot of the course (one commit, from November 2026), so it keeps its findings however the real course improves. It is never saved as your course; later demos open the downloaded copy at once, and **Refresh demo** downloads a clean copy again (after trying out fixes in it, say).
 
-**Reset everything…** on the setup page forgets everything Birdwatcher keeps (see [What Birdwatcher keeps](#what-birdwatcher-keeps)), after asking, and starts again as on a first run; course folders are not touched.
+**Reset settings…** on the setup page forgets what Birdwatcher keeps (all but its activity log) (see [What Birdwatcher keeps](#what-birdwatcher-keeps)), after asking, and starts again as on a first run; course folders are not touched.
 
 Findings appear as each check finishes, so the quick checks show at once while a slow one is still running. When checking again, each check's previous findings stay in the list until its new results arrive.
 
@@ -75,11 +75,12 @@ In the app, mouse and keyboard both work. The bottom bar shows the keys for what
 | `C` | Forget every fixed finding of this course |
 | `i`, or **Ignore** / **Un-ignore** | Ignore a finding (with an optional reason), or bring back an ignored one |
 | `a`, or **Add to dictionary** | For a spelling finding: add the word to the course's `cspell.json`, so it is never reported again |
+| `m`, or **Ask AI** | For a spelling finding: ask the AI model whether the word is a typo or a word to keep. On a branch: ask about all its words that have no verdict yet, after showing the cost (see [Asking the AI](#asking-the-ai)) |
 | `h` | Show or hide ignored findings (the IGNORED chip) |
 | `r` | Run the checks again, after fixing something |
 | `ctrl+r` | Hard refresh: run the checks again, asking every web site afresh instead of reusing the day's answers |
 | `x`, or **STOP** | Stop a slow check while it runs (its progress shows at the bottom of the list); findings from the checks that finished stay, and `r` checks again |
-| `s` | Choose another course folder, the AI model (the **AI MODEL** tab), try the demo, or reset everything |
+| `s` | Choose another course folder, the AI model (the **AI MODEL** tab), try the demo, or reset the settings |
 | `?` | List every key, marking the ones that do not apply right now |
 | `q` | Quit |
 
@@ -90,6 +91,17 @@ When a check knows the fix, the finding's panel shows it as a before and after, 
 ### Ignoring
 
 Any finding can be ignored, with an optional reason ("kept for last term's students"); ignoring an error asks for confirmation first, because readers are affected. Ignored findings leave the list, and the subtitle counts them; `h` shows them again, with their reasons, and `i` brings one back. Ignores are remembered per course folder in `ignored.json` next to the settings. An ignore matches a finding by its check, file and message rather than its line, so it still applies after lines are added or removed above it.
+
+### Asking the AI
+
+**You decide when the AI model is used.** Birdwatcher never sends anything to a model on its own: checking a course, opening a finding and fixing all work without one. A model is asked only when you press `m`.
+
+The spelling check knows its dictionaries, not your course: it flags names, terms and code words, and for a real typo it often has several suggestions or none. `m` sends the flagged word, with the line it is on, to the model chosen on the **AI MODEL** tab, which answers with a verdict:
+
+- **typo**, with the correction. In prose, the correction becomes the finding's fix, shown as a before and after like any other (**AI fix**): `f` applies it, and **Undo** takes it back. In code, or inside a longer name, no fix is offered, because renaming one use of a name could break the code; fix it by hand.
+- **keep**: the word is spelled as meant (a name, a technical term, a word from code). The dictionary's suggestion is dropped, and `a` adds the word to the course's `cspell.json`.
+
+Each verdict shows its reason and the model that gave it. On a branch (the Spelling check, a folder, a file), `m` first shows what asking will cost: how many words, in how many requests (40 words each), and roughly how many tokens. Models that think before they answer use several times more; the notification afterwards gives the real count. Only words without a verdict are asked about, so asking twice never pays twice. Verdicts are remembered per course folder, in `spelling-verdicts.json` next to the settings; `m` on a single finding asks again, for a second opinion.
 
 ### Editors
 
@@ -134,9 +146,19 @@ Everything Birdwatcher keeps is in its own folders, never in a course (except th
 | Fixed findings, per course folder | `fixes.json`, next to the settings |
 | Ignored findings and their reasons, per course folder | `ignored.json`, next to the settings |
 | Answers from web sites, for a day | `links.json`, next to the settings |
+| The AI's spelling verdicts, per course folder | `spelling-verdicts.json`, next to the settings |
+| The activity log (see below) | `birdwatcher.log`, next to the settings, with up to two older copies (`.1`, `.2`) |
 | The downloaded demo course | `demo/` in your user cache folder (on Windows, `%LOCALAPPDATA%\birdwatcher\Cache`) |
 
-**Reset everything…** on the setup page deletes all of these. API keys in environment variables are yours, and stay.
+**Reset settings…** on the setup page deletes all of these except the activity log. API keys in environment variables are yours, and stay.
+
+### Activity log
+
+Birdwatcher writes what it does to `birdwatcher.log`, one event per line with the time to the millisecond, so a session can be followed afterwards (when something looks wrong, the log says what happened): its start (version, Python, system), each key action and button, each check (its time and how many findings), every fix, undo, ignore and added word, every notification it showed, every setting saved, and any crash with its traceback. Requests to the AI model are logged in full: the model, the prompt, the answer, the time taken and the tokens used, or the error.
+
+API keys are never logged: a saved key is logged only as "a key was saved", keystrokes are not logged (actions are), and other libraries' logs, which can carry request headers, are left out. The log can hold course text (the lines sent to the model); it stays on your computer.
+
+When the log reaches about 1 MB it is renamed `birdwatcher.log.1` and a new one begins, so it never grows past about 3 MB. The setup page shows where it is and how large; **DELETE LOG** deletes it and its copies. `birdwatcher check` writes to the same log.
 
 ### Findings
 

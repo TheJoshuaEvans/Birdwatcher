@@ -9,6 +9,7 @@ the key and the model name change.
 Joshua Evans, 2026-11-18 (written with Claude Opus 5.5)
 """
 
+import logging
 import ssl
 import time
 from collections.abc import Callable, Mapping
@@ -31,6 +32,8 @@ SAVED_SOURCE = "saved in Birdwatcher"
 TOKENS_PER_PRICE = 1_000_000  # prices are shown per million tokens
 # The SDK insists on a key; this one is never sent (see _key_headers).
 UNSENT_KEY = "no-key"
+
+_log = logging.getLogger(__name__)  # never given the key (see core.log)
 
 
 @dataclass(frozen=True)
@@ -328,23 +331,48 @@ def chat(connection, messages, transport=None):
             or sent no text. The message names the provider and repeats what
             it said, when it said something.
     """
+    messages = list(messages)
+    _log.info(
+        "request to %s, model %s at %s: %d messages",
+        connection.provider.name,
+        connection.model,
+        connection.base_url,
+        len(messages),
+    )
+    for message in messages:
+        _log.debug("%s:\n%s", message["role"], message["content"])
     started = time.monotonic()
-    with _explained(connection):
-        completion = _client(connection, transport).chat.completions.create(
-            model=connection.model,
-            messages=list(messages),
-            extra_headers=_key_headers(connection),
+    try:
+        with _explained(connection):
+            completion = _client(connection, transport).chat.completions.create(
+                model=connection.model,
+                messages=messages,
+                extra_headers=_key_headers(connection),
+            )
+    except AiError as error:
+        _log.warning(
+            "request failed after %.1f s: %s", time.monotonic() - started, error
         )
+        raise
     seconds = time.monotonic() - started
     choice = completion.choices[0] if completion.choices else None
     text = choice.message.content if choice else None
+    usage = completion.usage
+    _log.info(
+        "answer from %s in %.1f s: %s tokens read, %s written, finish reason %s",
+        completion.model or connection.model,
+        seconds,
+        usage.prompt_tokens if usage else "?",
+        usage.completion_tokens if usage else "?",
+        choice.finish_reason if choice else "no choices",
+    )
+    _log.debug("answer:\n%s", text)
     if not text:
         reason = choice.finish_reason if choice else "no choices"
         raise AiError(
             f"{connection.model} sent no text (finish reason: {reason}). "
             "Try again, or choose another model."
         )
-    usage = completion.usage
     return Reply(
         text=text,
         model=completion.model or connection.model,
@@ -372,11 +400,19 @@ def list_models(connection, transport=None):
     Raises:
         AiError: As for chat.
     """
-    with _explained(connection):
-        page = _client(connection, transport).models.list(
-            extra_headers=_key_headers(connection)
-        )
+    _log.info(
+        "listing the models of %s at %s", connection.provider.name, connection.base_url
+    )
+    try:
+        with _explained(connection):
+            page = _client(connection, transport).models.list(
+                extra_headers=_key_headers(connection)
+            )
+    except AiError as error:
+        _log.warning("listing models failed: %s", error)
+        raise
     models = [_model_info(model) for model in page.data]
+    _log.info("%d models listed", len(models))
     return sorted(models, key=lambda model: model.id)
 
 

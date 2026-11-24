@@ -39,6 +39,7 @@ Tests lock in inputs, outputs and side effects, never internals. Anything the us
 - **A fixable check:** give the finding a `core.findings.Fix`, a one-line replacement (line, exact text before, text after). Only offer a fix that is right whenever it applies; anything needing judgement stays a message. A fix to a link also names its `Destination`, so the app can show where the link now leads. The app applies, records, undoes and clears fixes; checks never write files.
 - **A new screen:** a module in `ui/tui/`; its styles in `birdwatcher.tcss`; the app moves to it from `app.py`.
 - **A new setting:** a field on `core.config.Config`, read and written by `load_config` and `save_config`.
+- **Anything the app does** (an action's effect, a file written, a request sent) gets a line in the activity log: `_log = logging.getLogger(__name__)` in the module, `_log.info(...)` at the point it happens, `_log.debug(...)` for bulky detail such as a prompt. Key actions, buttons in the findings view and notifications are logged centrally (`BirdwatcherApp.run_action`, `notify`). Never log an API key or a keystroke; see `core/log.py`.
 
 ## Style
 
