@@ -1,6 +1,6 @@
 [project]
 name = "birdwatcher"
-version = "0.1.0"
+version = "0.2.0"
 description = "Watches course materials for consistency problems and blind spots"
 readme = "README.md"
 authors = [
