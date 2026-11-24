@@ -15,6 +15,7 @@ import time
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from http import HTTPStatus
 
 import openai
 import truststore
@@ -227,8 +228,23 @@ class ModelInfo:
 
 
 class AiError(Exception):
-    """A request could not be made or failed; the message is for people and
-    never contains the API key."""
+    """
+    A request could not be made or failed; the message is for people and
+    never contains the API key.
+
+    Attributes:
+        retry_may_help (bool): True when the same request may well succeed
+            if sent again: the model answered without text, the provider
+            failed on its side (5xx) or did not answer in time. A router such
+            as openrouter/free may then pick another model. False when it
+            would fail the same way: the key or model was refused, the rate
+            was limited, the provider could not be reached, or the settings
+            are unusable.
+    """
+
+    def __init__(self, message, retry_may_help=False):
+        super().__init__(message)
+        self.retry_may_help = retry_may_help
 
 
 def find_key(provider, saved, environ):
@@ -371,7 +387,8 @@ def chat(connection, messages, transport=None):
         reason = choice.finish_reason if choice else "no choices"
         raise AiError(
             f"{connection.model} sent no text (finish reason: {reason}). "
-            "Try again, or choose another model."
+            "Try again, or choose another model.",
+            retry_may_help=True,
         )
     return Reply(
         text=text,
@@ -444,7 +461,18 @@ def _explained(connection):
     try:
         yield
     except openai.OpenAIError as error:
-        raise AiError(_explain(connection, error)) from error
+        raise AiError(
+            _explain(connection, error), retry_may_help=_may_pass(error)
+        ) from error
+
+
+def _may_pass(error):
+    """Whether sending the same request again may succeed (see AiError)."""
+    if isinstance(error, openai.APITimeoutError):  # before its parent class
+        return True
+    if isinstance(error, openai.APIStatusError):
+        return error.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR
+    return False
 
 
 def _explain(connection, error):

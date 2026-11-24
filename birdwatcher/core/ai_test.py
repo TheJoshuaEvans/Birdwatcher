@@ -281,6 +281,47 @@ def test_an_answer_without_text_is_an_error():
         chat(openrouter(), CONVERSATION, transport=server.transport)
 
 
+def failure(respond):
+    """The AiError chat raises when the server answers with respond(request)."""
+    with pytest.raises(AiError) as caught:
+        chat(openrouter(), CONVERSATION, transport=FakeServer(respond).transport)
+    return caught.value
+
+
+def status(code):
+    return lambda request: httpx2.Response(code, json={"error": {"message": "x"}})
+
+
+def stall(request):
+    raise httpx2.ReadTimeout("timed out", request=request)
+
+
+def refuse(request):
+    raise httpx2.ConnectError("connection refused", request=request)
+
+
+@pytest.mark.parametrize(
+    "respond",
+    [
+        lambda request: httpx2.Response(200, json=completion(text=None)),
+        status(500),
+        stall,
+    ],
+    ids=["no-text", "server-error", "timeout"],
+)
+def test_failures_another_try_may_avoid_say_so(respond):
+    assert failure(respond).retry_may_help
+
+
+@pytest.mark.parametrize(
+    "respond",
+    [status(401), status(404), status(429), status(402), refuse],
+    ids=["key-refused", "no-such-model", "rate-limited", "no-credit", "unreachable"],
+)
+def test_failures_that_would_repeat_say_so(respond):
+    assert not failure(respond).retry_may_help
+
+
 # list_models
 
 

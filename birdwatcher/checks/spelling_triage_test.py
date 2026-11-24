@@ -256,6 +256,38 @@ def test_a_failed_request_stops_asking_and_keeps_earlier_verdicts():
     assert result.error == "OpenRouter limited the rate."
 
 
+def passing(message="openrouter/free sent no text"):
+    """A failure another try may avoid."""
+    return AiError(message, retry_may_help=True)
+
+
+def test_a_failure_another_try_may_avoid_is_asked_again():
+    questions = [question(f"wordy{i}") for i in range(WORDS_PER_REQUEST + 1)]
+    first = answer(*(keep(q.word) for q in questions[:WORDS_PER_REQUEST]))
+    second = answer(keep(questions[-1].word))
+    model = FakeModel(reply(first), passing(), reply(second))
+    result = triage(questions, model)
+    assert len(model.conversations) == 3
+    assert model.conversations[2] == model.conversations[1]  # the same request
+    assert len(result.verdicts) == WORDS_PER_REQUEST + 1
+    assert (result.unanswered, result.failures, result.error) == ([], [], None)
+
+
+def test_a_request_failing_twice_is_skipped_and_asking_carries_on():
+    questions = [question(f"wordy{i}") for i in range(2 * WORDS_PER_REQUEST + 1)]
+    first = answer(*(keep(q.word) for q in questions[:WORDS_PER_REQUEST]))
+    third = answer(keep(questions[-1].word))
+    model = FakeModel(reply(first), passing(), passing("still no text"), reply(third))
+    result = triage(questions, model)
+    assert len(model.conversations) == 4
+    assert len(result.verdicts) == WORDS_PER_REQUEST + 1
+    assert result.unanswered == [
+        q.word.lower() for q in questions[WORDS_PER_REQUEST : 2 * WORDS_PER_REQUEST]
+    ]
+    assert result.failures == ["request 2 of 3: still no text"]
+    assert result.error is None
+
+
 def test_nothing_to_ask_sends_nothing():
     model = FakeModel()
     result = triage([], model)

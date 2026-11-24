@@ -16,7 +16,7 @@ Joshua Evans, 2026-11-23 (written with Claude Opus 5.5)
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from birdwatcher.checks.spelling import (
     fixable_in_place,
@@ -126,8 +126,11 @@ class TriageResult:
         input_tokens (int): Tokens read, as the provider reported them (0 when
             it reported none).
         output_tokens (int): Tokens written, likewise.
-        error (str | None): Why asking stopped early (the provider failed),
-            or None. Verdicts from requests before the failure are kept.
+        error (str | None): Why asking stopped early (a failure that would
+            repeat, such as a refused key or a rate limit), or None. Verdicts
+            from requests before it are kept.
+        failures (list[str]): Requests given up after failing twice while
+            asking carried on, each as "request N of M: <reason>".
     """
 
     verdicts: dict[str, Verdict]
@@ -135,6 +138,7 @@ class TriageResult:
     input_tokens: int
     output_tokens: int
     error: str | None = None
+    failures: list[str] = field(default_factory=list)
 
 
 class VerdictError(Exception):
@@ -248,8 +252,11 @@ def triage(questions, ask):
     Ask a model about some words, WORDS_PER_REQUEST at a time.
 
     An answer with no readable verdicts is sent back once, with what was
-    wrong, before its words count as unanswered. Asking stops at the first
-    request that fails.
+    wrong, before its words count as unanswered. A request that fails in a
+    way another try may avoid (AiError.retry_may_help) is sent again once;
+    failing again, its words count as unanswered, the reason goes to
+    failures, and asking carries on with the next request. Any other
+    failure stops asking.
 
     Args:
         questions (Sequence[Question]): The words to ask about.
@@ -258,11 +265,11 @@ def triage(questions, ask):
             connection). Raises AiError when it fails.
 
     Returns:
-        TriageResult: The verdicts, the words left unanswered (all of a
-            failed request's and later requests' words included), the tokens
-            used and any error.
+        TriageResult: The verdicts, the words left unanswered (a skipped
+            request's words, and on a stop all the remaining words), the
+            tokens used, the skipped requests' reasons and any stop.
     """
-    verdicts, unanswered = {}, []
+    verdicts, unanswered, failures = {}, [], []
     tokens = [0, 0]  # read, written
     error = None
 
@@ -278,12 +285,19 @@ def triage(questions, ask):
         words = ", ".join(question.word for question in batch)
         _log.info("%s: %d words: %s", where, len(batch), words)
         try:
-            found = _ask_batch(batch, asked, where)
+            found = _ask_batch_twice(batch, asked, where)
         except AiError as failure:
-            _log.warning("%s failed, asking stops: %s", where, failure)
-            error = str(failure)
-            unanswered += [q.word.lower() for later in batches[number:] for q in later]
-            break
+            if failure.retry_may_help:  # failed twice: skip it, carry on
+                _log.warning("%s failed again, skipped: %s", where, failure)
+                failures.append(f"{where}: {failure}")
+                found = {}
+            else:
+                _log.warning("%s failed, asking stops: %s", where, failure)
+                error = str(failure)
+                unanswered += [
+                    q.word.lower() for later in batches[number:] for q in later
+                ]
+                break
         verdicts.update(found)
         unanswered += [q.word.lower() for q in batch if q.word.lower() not in found]
     _log.info(
@@ -292,7 +306,7 @@ def triage(questions, ask):
         len(unanswered),
         f": {', '.join(unanswered)}" if unanswered else "",
     )
-    return TriageResult(verdicts, unanswered, tokens[0], tokens[1], error)
+    return TriageResult(verdicts, unanswered, tokens[0], tokens[1], error, failures)
 
 
 def ai_fix(course_dir, finding, verdict):
@@ -389,6 +403,17 @@ def _batches(questions):
         list(questions[start : start + WORDS_PER_REQUEST])
         for start in range(0, len(questions), WORDS_PER_REQUEST)
     ]
+
+
+def _ask_batch_twice(batch, ask, where):
+    """_ask_batch, sent once more after a failure another try may avoid."""
+    try:
+        return _ask_batch(batch, ask, where)
+    except AiError as failure:
+        if not failure.retry_may_help:
+            raise
+        _log.warning("%s failed, asking again: %s", where, failure)
+    return _ask_batch(batch, ask, where)
 
 
 def _ask_batch(batch, ask, where):
